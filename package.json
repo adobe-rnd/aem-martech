@@ -1,0 +1,35 @@
+{
+  "name": "@adobe/aem-martech",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "lint": "eslint src"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/adobe/aem-martech.git"
+  },
+  "author": "Adobe Inc.",
+  "license": "Apache-2.0",
+  "keywords": [
+    "aem",
+    "martech",
+    "experience",
+    "plugin",
+    "campaigns",
+    "audiences",
+    "datalayer",
+    "analytics",
+    "launch"
+  ],
+  "bugs": {
+    "url": "https://github.com/adobe/aem-martech/issues"
+  },
+  "homepage": "https://github.com/adobe/aem-martech#readme",
+  "devDependencies": {
+    "@babel/eslint-parser": "7.22.15",
+    "eslint": "8.48.0",
+    "eslint-config-airbnb-base": "15.0.0",
+    "eslint-plugin-import": "2.28.1"
+  }
+}
