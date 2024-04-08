@@ -7,13 +7,15 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
 
 The AEM MarTech plugin is essentially a wrapper around the Adobe Experience Platform WebSDK (v2.19.2) and the Adobe Client Data Layer (v2.0.2), and that can seamlessly integrate your website with:
 
-- 💸 Adobe Target: to personalize your pages
-- 📈 Adobe Analytics: to track customer journey data
+- 🎯 Adobe Target: to personalize your pages
+- 📊 Adobe Analytics: to track customer journey data
 - 🚩 Adobe Experience Platform Tags (a.k.a. Launch): to track your custom events
 
 It's key differentiator are:
+- 🌍 Experience Platform enabled: the library fully integrates with our main Adobe Experience Platform and all the services of our ecosystem
 - 🚀 extremely fast: the library is optimized to reduce load delay, TBT and CLS, and has minimal impact on your Core Web Vitals
 - 👤 privacy-first: the library does not track you by default, and can easily be integrated with your preferred consent management system
+- 
 
 
 ## Installation
