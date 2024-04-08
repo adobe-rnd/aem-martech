@@ -42,10 +42,10 @@ you can just delete the folder and re-add the plugin via the `git subtree add` c
 To properly connect and configure the plugin for your project, you'll need to edit both the `head.html` and `scripts.js` in your AEM project and add the following:
 
 1. Add preload hints for the dependencies we need to speed up the page load at the end of your `head.html`:
-    ```js
-    <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/index.js"></script>
-    <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/alloy.min.js"></script>
-    <link rel="preconnect" href="https://edge.adobedc.net"></script><!-- change to adobedc.demdex.net if you enable third party cookies -->
+    ```html
+    <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/index.js"></link>
+    <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/alloy.min.js"></link>
+    <link rel="preconnect" href="https://edge.adobedc.net"></link><!-- change to adobedc.demdex.net if you enable third party cookies -->
     ```
 2. Import the various plugin methods at the top of your `scripts.js` file:
     ```js
