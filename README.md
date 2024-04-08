@@ -45,7 +45,8 @@ To properly connect and configure the plugin for your project, you'll need to ed
     ```html
     <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/index.js"></link>
     <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/alloy.min.js"></link>
-    <link rel="preconnect" href="https://edge.adobedc.net"></link><!-- change to adobedc.demdex.net if you enable third party cookies -->
+    <link rel="preconnect" href="https://edge.adobedc.net"></link>
+    <!-- change to adobedc.demdex.net if you enable third party cookies -->
     ```
 2. Import the various plugin methods at the top of your `scripts.js` file:
     ```js
