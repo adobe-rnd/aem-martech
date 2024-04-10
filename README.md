@@ -124,7 +124,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
       }, 3000);
     }
     ```
-7. Connect your consent management system so you can track when consent is given. Typically call the `updateUserConsent` with a boolean once your consent management sends the event. Here is an example for the [consent banner block](https://github.com/adobe/aem-block-collection/pull/50) in AEM Block Collection:
+7. Connect your consent management system so you can track when consent is given. Typically call the `updateUserConsent` with a set of categories & booleans pairs once your consent management sends the event. Here is an example for the [consent banner block](https://github.com/adobe/aem-block-collection/pull/50) in AEM Block Collection:
     ```js
     function consentEventHandler(ev) {
       const collect = ev.detail.categories.includes('CC_ANALYTICS');
