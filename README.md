@@ -17,6 +17,17 @@ It's key differentiator are:
 - 👤 privacy-first: the library does not track you by default, and can easily be integrated with your preferred consent management system
 - 
 
+## Prerequisites
+
+You need to have access to:
+- Adobe Experience Platform
+- Adobe Analytics
+- Adobe Target
+
+And you need to have preconfigured:
+- a datastream with Analytics and Target
+- an Adobe Experience Platform Tag (Launch) container with the Adobe Analytics & Adobe Client Data Layer extensions at a minimum
+
 
 ## Installation
 
