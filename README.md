@@ -128,8 +128,11 @@ To properly connect and configure the plugin for your project, you'll need to ed
 7. Connect your consent management system so you can track when consent is given. Typically call the `updateUserConsent` with a boolean once your consent management sends the event. Here is an example for the [consent banner block](https://github.com/adobe/aem-block-collection/pull/50) in AEM Block Collection:
     ```js
     function consentEventHandler(ev) {
-      const isConsentGiven = ev.detail.categories.includes('CC_TARGETING');
-      updateUserConsent(isConsentGiven);
+      const collect = ev.detail.categories.includes('CC_ANALYTICS');
+      const marketing = ev.detail.categories.includes('CC_MARKETING');
+      const personalize = ev.detail.categories.includes('CC_TARGETING');
+      const share = ev.detail.categories.includes('CC_SHARING');
+      updateUserConsent({ collect, marketing, personalize, share });
     }
     window.addEventListener('consent', consentEventHandler);
     window.addEventListener('consent-updated', consentEventHandler);

@@ -202,20 +202,33 @@ async function loadAndConfigureDataLayer() {
 
 /**
  * Sets Adobe standard v2.0 consent for alloy based on the input
- * Documentation: https://experienceleague.adobe.com/docs/experience-platform/edge/consent/supporting-consent.html?lang=en#using-the-adobe-standard-version-1.0
- * @param approved
- * @returns {Promise<*>}
+ * Documentation:
+ * https://experienceleague.adobe.com/en/docs/experience-platform/landing/governance-privacy-security/consent/adobe/dataset#structure
+ * https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents
+ * @param {Object} config The consent config to use
+ * @param {Boolean} [config.collect] Whether data collection is allowed
+ * @param {Boolean} [config.marketing] Whether data can be used for marketing purposes
+ * @param {Boolean} [config.personalize] Whether data can be used for personalization purposes
+ * @param {Boolean} [config.share] Whether data can be shared/sold to 3rd parties
+ * @returns {Promise<*>} a promise that the consent setting shave been updated
  */
-export async function updateUserConsent(isConsented) {
+export async function updateUserConsent(consent) {
   // eslint-disable-next-line no-console
   console.assert(config.alloyInstanceName, 'Martech needs to be initialized before the `updateUserConsent` method is called');
+
   return window[config.alloyInstanceName]('setConsent', {
     consent: [{
       standard: 'Adobe',
       version: '2.0',
       value: {
-        collect: { val: isConsented ? 'y' : 'n' },
-        metadata: { time: new Date().toISOString() },
+        collect: { val: consent.collect ? 'y' : 'n' },
+        marketing: {
+          any: { val: consent.marketing ? 'y' : 'n' },
+        },
+        personalize: {
+          content: { val: consent.personalize ? 'y' : 'n' }
+        },
+        share: { val: consent.share ? 'y' : 'n' }
       },
     }],
   });
