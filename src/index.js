@@ -293,6 +293,8 @@ async function applyPropositions(instanceName) {
 let response;
 export async function initMartech(webSDKConfig, martechConfig = {}) {
   // eslint-disable-next-line no-console
+  console.assert(!config, 'Martech already initialized.');
+  // eslint-disable-next-line no-console
   console.assert(webSDKConfig?.datastreamId || webSDKConfig?.edgeConfigId, 'Please set your "datastreamId" for the WebSDK config.');
   // eslint-disable-next-line no-console
   console.assert(webSDKConfig?.orgId, 'Please set your "orgId" for the WebSDK config.');
