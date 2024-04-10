@@ -90,7 +90,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
     - the WebSDK `context` flag will, by default, track the `web`, `device` and `environment` details
     - the WebSDK `debugEnabled` flag will, by default, be set to `true` on localhost and any `.page` URL
     - the WebSDK `defaultConsent` is set to `pending` to avoid tracking any sensitive information by default
-    - we recommend enabling `personalization` only if needed to limit the performance imapact. We typically recommend using a page metadata flag for this
+    - we recommend enabling `personalization` only if needed to limit the performance impact. We typically recommend using a page metadata flag for this
 4. Adjust your `loadEager` method so it waits for the martech to load and personalize the page:
     ```js
     /**
