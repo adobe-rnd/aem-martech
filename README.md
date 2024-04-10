@@ -158,7 +158,7 @@ initMartech(
     dataLayer: true, // whether to use the Adobe Client Data Layer (ACDL)
     dataLayerInstanceName: 'adobeDataLayer', // the name of the global ACDL instance
     launchUrls: [], // the list of Launch containers to load
-    personalization: true, // whether to apply page personalization from Adobe Target (AT)
+    personalization: true, // whether to apply page personalization from Adobe Target (AT) or Adobe Journey Optimizer (AJO)
   },
 );
 ```
