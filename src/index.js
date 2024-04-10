@@ -189,7 +189,7 @@ async function loadAndConfigureDataLayer() {
           data = {};
         }
         if (!el.id) {
-          const index = [...document.querySelectorAll(`.${el.classList[0]}`)].indexOf(el)
+          const index = [...document.querySelectorAll(`.${el.classList[0]}`)].indexOf(el);
           el.id = `${data.parentId ? `${data.parentId}-` : ''}${index + 1}`;
         }
         window[config.dataLayerInstanceName].push({
@@ -226,9 +226,9 @@ export async function updateUserConsent(consent) {
           any: { val: consent.marketing ? 'y' : 'n' },
         },
         personalize: {
-          content: { val: consent.personalize ? 'y' : 'n' }
+          content: { val: consent.personalize ? 'y' : 'n' },
         },
-        share: { val: consent.share ? 'y' : 'n' }
+        share: { val: consent.share ? 'y' : 'n' },
       },
     }],
   });
