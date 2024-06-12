@@ -80,6 +80,15 @@ To properly connect and configure the plugin for your project, you'll need to ed
       {
         datastreamId: /* your datastream id here, formally edgeConfigId */,
         orgId: /* your ims org id here */,
+        onBeforeEventSend: (payload) => {
+          // set custom Target params via 
+          // see doc at https://experienceleague.adobe.com/en/docs/platform-learn/migrate-target-to-websdk/send-parameters#parameter-mapping-summary
+          payload.data.__adobe.target ||= {};
+
+          // set custom Analytics params
+          // see doc at https://experienceleague.adobe.com/en/docs/analytics/implementation/aep-edge/data-var-mapping
+          payload.data.__adobe.analytics ||= {};
+        }
       },
       // The library config
       {

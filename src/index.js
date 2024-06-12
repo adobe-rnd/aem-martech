@@ -331,14 +331,17 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
   alloyConfig = {
     ...getDefaultAlloyConfiguration(),
     ...webSDKConfig,
-    onBeforeEventSend: (data) => {
+    onBeforeEventSend: (payload) => {
+      payload.data ||= {};
+      payload.data.__adobe ||= {};
+
       // Let project override the data if needed
-      webSDKConfig?.onBeforeEventSend(data);
+      webSDKConfig?.onBeforeEventSend(payload);
 
       // Automatically track displayed propositions as part of the pageview event
-      if (data.xdm?.eventType === 'web.webpagedetails.pageViews' && config.personalization) {
-        data.xdm.eventType = 'decisioning.propositionDisplay';
-        data.xdm._experience = {
+      if (payload.xdm?.eventType === 'web.webpagedetails.pageViews' && config.personalization) {
+        payload.xdm.eventType = 'decisioning.propositionDisplay';
+        payload.xdm._experience = {
           decisioning: {
             propositions: response.propositions
               .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
