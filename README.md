@@ -243,7 +243,7 @@ The library also exposes a few helper methods to let you quickly integrate defau
 
 Typical instrumentations based on a centralized approach using Adobe Tag/Launch that is loaded early in the pagelife-cycle essentially impacts the user experience negatively for the benefit of marketing metrics. Core Web Vitals are noticeably impacted, and Google PageSpeed reports typically show a drop of 20~40 points in the performance category.
 
-### But can't I just defer teh launch container to solve this?
+### But can't I just defer the launch container to solve this?
 
 This can indeed solve the issue in some cases, but comes with its own drawbacks:
 1. personalization use cases will be delayed as well, so you'll introduce content flickering when the personalization kicks in
