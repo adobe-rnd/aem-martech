@@ -284,7 +284,7 @@ async function applyPropositions(instanceName) {
     },
   });
   response = renderDecisionResponse;
-  const propositions = window.structuredClone(renderDecisionResponse.propositions);
+  const propositions = window.structuredClone(renderDecisionResponse.propositions || []);
   onDecoratedElement(async () => {
     if (!propositions.length) {
       return;
