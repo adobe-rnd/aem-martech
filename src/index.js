@@ -336,7 +336,9 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
       payload.data.__adobe ||= {};
 
       // Let project override the data if needed
-      webSDKConfig?.onBeforeEventSend(payload);
+      if (webSDKConfig?.onBeforeEventSend) {
+        webSDKConfig?.onBeforeEventSend(payload);
+      }
 
       // Automatically track displayed propositions as part of the pageview event
       if (payload.xdm?.eventType === 'web.webpagedetails.pageViews' && config.personalization) {
