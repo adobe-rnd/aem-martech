@@ -27,6 +27,20 @@ let config;
 let alloyConfig;
 
 /**
+ * Runs a promise with a timeout that rejects it if the time has passed.
+ * @param {Promise} promise The base promise to use
+ * @param {Number} [timeout=1000] The timeout to use in ms
+ * @returns the promise result, or a rejected promise if it did not resolve in time
+ */
+function promiseWithTimeout(promise, timeout = 1000) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(reject, timeout); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
  * Error handler for rejected promises.
  * @param {Error} error The base error
  * @throws a decorated error that can be intercepted by RUM handlers.
@@ -284,7 +298,10 @@ async function applyPropositions(instanceName) {
     },
   });
   response = renderDecisionResponse;
-  const propositions = window.structuredClone(renderDecisionResponse.propositions || []);
+  if (!renderDecisionResponse?.propositions) {
+    return [];
+  }
+  const propositions = window.structuredClone(renderDecisionResponse.propositions);
   onDecoratedElement(async () => {
     if (!propositions.length) {
       return;
@@ -398,7 +415,7 @@ export async function martechEager() {
   if (config.personalization) {
     // eslint-disable-next-line no-console
     console.assert(window.alloy, 'Martech needs to be initialized before the `martechEager` method is called');
-    return applyPropositions(config.alloyInstanceName);
+    return promiseWithTimeout(applyPropositions(config.alloyInstanceName));
   }
   return Promise.resolve();
 }
