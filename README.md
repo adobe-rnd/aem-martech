@@ -74,6 +74,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
     ```
 3. Configure the plugin just after the import:
     ```js
+    const isConsentGiven = /* hook in your consent check here to make sure you can run personalization use cases. */;
     const martechLoadedPromise = initMartech(
       // The WebSDK config
       // Documentation: https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/overview#configure-js
@@ -93,7 +94,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
       // The library config
       {
         launchUrls: [/* your Launch container URLs here */],
-        personalization: !!getMetadata('target'),
+        personalization: !!getMetadata('target') && isConsentGiven,
       },
     );
     ```
@@ -101,7 +102,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
     - the WebSDK `context` flag will, by default, track the `web`, `device` and `environment` details
     - the WebSDK `debugEnabled` flag will, by default, be set to `true` on localhost and any `.page` URL
     - the WebSDK `defaultConsent` is set to `pending` to avoid tracking any sensitive information by default
-    - we recommend enabling `personalization` only if needed to limit the performance impact. We typically recommend using a page metadata flag for this
+    - we recommend enabling `personalization` only if needed to limit the performance impact, and only if consent has been given by the user to be compliant with privacy laws. We typically recommend using a page metadata flag for the former, and integrating with your preferred consent management system APIs for the latter.
 4. Adjust your `loadEager` method so it waits for the martech to load and personalize the page:
     ```js
     /**
