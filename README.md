@@ -16,7 +16,7 @@ The AEM MarTech plugin is essentially a wrapper around the Adobe Experience Plat
 It's key differentiator are:
 - 🌍 Experience Platform enabled: the library fully integrates with our main Adobe Experience Platform and all the services of our ecosystem
 - 🚀 extremely fast: the library is optimized to reduce load delay, TBT and CLS, and has minimal impact on your Core Web Vitals
-- 👤 privacy-first: the library does not track you by default, and can easily be integrated with your preferred consent management system
+- 👤 privacy-first: the library does not track end users by default, and can easily be integrated with your preferred consent management system to open up more advanced use cases
 
 ## Prerequisites
 
@@ -29,6 +29,7 @@ And you need to have preconfigured:
 - a datastream in AEP with Adobe Analytics, and Adobe Target or Adobe Journey Optimizer configured
 - an Adobe Experience Platform Tag (Launch) container with the Adobe Analytics & Adobe Client Data Layer extensions at a minimum
 
+We also recommend using a proper consent management system. If not, make sure to default the consent to `in` so you don't block out personalization use cases.
 
 ## Installation
 
@@ -101,7 +102,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
     Note that:
     - the WebSDK `context` flag will, by default, track the `web`, `device` and `environment` details
     - the WebSDK `debugEnabled` flag will, by default, be set to `true` on localhost and any `.page` URL
-    - the WebSDK `defaultConsent` is set to `pending` to avoid tracking any sensitive information by default
+    - the WebSDK `defaultConsent` is set to `pending` to avoid tracking any sensitive information by default. This will also prevent personalization to properly run unless consent is explicitly given
     - we recommend enabling `personalization` only if needed to limit the performance impact, and only if consent has been given by the user to be compliant with privacy laws. We typically recommend using a page metadata flag for the former, and integrating with your preferred consent management system APIs for the latter.
 4. Adjust your `loadEager` method so it waits for the martech to load and personalize the page:
     ```js
