@@ -13,6 +13,9 @@
  * @property {String[]} launchUrls A list of launch container URLs to load (defults to empty list)
  * @property {Boolean} personalization Indicates whether Adobe Target should be enabled
  *                                     (defaults to true)
+ * @property {Number} personalizationTimeout Indicates the amount of time to wait before bailing
+ *                                           out on the personalization and continue rendering the
+ *                                           page (defaults to 1s)
  */
 export const DEFAULT_CONFIG = {
   analytics: true,
@@ -21,6 +24,7 @@ export const DEFAULT_CONFIG = {
   dataLayerInstanceName: 'adobeDataLayer',
   launchUrls: [],
   personalization: true,
+  personalizationTimeout: 1000,
 };
 
 let config;
@@ -415,7 +419,15 @@ export async function martechEager() {
   if (config.personalization) {
     // eslint-disable-next-line no-console
     console.assert(window.alloy, 'Martech needs to be initialized before the `martechEager` method is called');
-    return promiseWithTimeout(applyPropositions(config.alloyInstanceName));
+    return promiseWithTimeout(
+      applyPropositions(config.alloyInstanceName),
+      config.personalizationTimeout,
+    ).catch(() => {
+      if (alloyConfig.debugEnabled) {
+        // eslint-disable-next-line no-console
+        console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
+      }
+    });
   }
   return Promise.resolve();
 }
