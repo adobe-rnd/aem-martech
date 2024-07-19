@@ -30,7 +30,7 @@ export const DEFAULT_CONFIG = {
 let config;
 let alloyConfig;
 let isAlloyConfigured = false;
-let pendingAlloyCommands = [];
+const pendingAlloyCommands = [];
 
 /**
  * Runs a promise with a timeout that rejects it if the time has passed.
