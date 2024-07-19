@@ -29,6 +29,8 @@ export const DEFAULT_CONFIG = {
 
 let config;
 let alloyConfig;
+let isAlloyConfigured = false;
+let pendingAlloyCommands = [];
 
 /**
  * Runs a promise with a timeout that rejects it if the time has passed.
@@ -117,6 +119,8 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
   await import('./alloy.min.js');
   try {
     await window[instanceName]('configure', webSDKConfig);
+    isAlloyConfigured = true;
+    pendingAlloyCommands.forEach((fn) => fn());
   } catch (err) {
     handleRejectedPromise(new Error(err));
   }
@@ -241,7 +245,7 @@ export async function updateUserConsent(consent) {
   // eslint-disable-next-line no-console
   console.assert(config.alloyInstanceName, 'Martech needs to be initialized before the `updateUserConsent` method is called');
 
-  return window[config.alloyInstanceName]('setConsent', {
+  const fn = () => window[config.alloyInstanceName]('setConsent', {
     consent: [{
       standard: 'Adobe',
       version: '2.0',
@@ -258,6 +262,11 @@ export async function updateUserConsent(consent) {
       },
     }],
   });
+  if (isAlloyConfigured) {
+    return fn();
+  }
+  pendingAlloyCommands.push(fn);
+  return Promise.resolve();
 }
 
 /**
