@@ -83,7 +83,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
         datastreamId: /* your datastream id here, formally edgeConfigId */,
         orgId: /* your ims org id here */,
         onBeforeEventSend: (payload) => {
-          // set custom Target params via 
+          // set custom Target params 
           // see doc at https://experienceleague.adobe.com/en/docs/platform-learn/migrate-target-to-websdk/send-parameters#parameter-mapping-summary
           payload.data.__adobe.target ||= {};
 
@@ -261,7 +261,7 @@ Our approach just extracts those key elements from the launch container so we ca
 We are basically building on top of:
 - [Top and bottom of page events](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/use-cases/top-bottom-page-events) so we can enable personalization early in the page load, and wait for the page to fully render to report metrics
 - [Data object variable mapping](https://experienceleague.adobe.com/en/docs/analytics/implementation/aep-edge/data-var-mapping) so we can gather key page metadata for your page in Adobe Analytics 
-- Adobe Launch to trigger additional rules and based on data elements in a delayed manner so we still support marketing use cases you'd expect to cover via Adobe Launch alone
+- Adobe Launch to trigger additional rules based on data elements in a delayed manner so we still support marketing use cases you'd expect to cover via Adobe Launch alone
 
 On top of this, we also fine-tuned the code to:
 - avoid content flicker as the DOM is dynamically rendered to support AEM EDS and/or SPA use cases
