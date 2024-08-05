@@ -27,7 +27,7 @@ You need to have access to:
 
 And you need to have preconfigured:
 - a datastream in AEP with Adobe Analytics, and Adobe Target or Adobe Journey Optimizer configured
-- an Adobe Experience Platform Tag (Launch) container with the Adobe Analytics & Adobe Client Data Layer extensions at a minimum
+- an Adobe Experience Platform Tag (Launch) container with the Adobe Client Data Layer extensions at a minimum
 
 We also recommend using a proper consent management system. If not, make sure to default the consent to `in` so you don't block out personalization use cases.
 
@@ -244,19 +244,19 @@ The library also exposes a few helper methods to let you quickly integrate defau
 
 ### Why shouldn't I use the default Adobe Tag/Launch approach to do all of this?
 
-Typical instrumentations based on a centralized approach using Adobe Tag/Launch that is loaded early in the pagelife-cycle essentially impacts the user experience negatively for the benefit of marketing metrics. Core Web Vitals are noticeably impacted, and Google PageSpeed reports typically show a drop of 20~40 points in the performance category.
+Typical instrumentations based on a centralized approach using Adobe Tag/Launch that is loaded early in the page life-cycle essentially impacts the user experience negatively for the benefit of marketing metrics. Core Web Vitals are noticeably impacted, and Google PageSpeed reports typically show a drop of 20~40 points in the performance category.
 
 ### But can't I just defer the launch container to solve this?
 
-This can indeed solve the issue in some cases, but comes with its own drawbacks:
+This can indeed solve the issue in some cases, but comes with some drawbacks:
 1. personalization use cases will be delayed as well, so you'll introduce content flickering when the personalization kicks in
-2. analytics metrics gathering will be delayed as well, so if your website has a large percentage of early bounces, your analytics reports won't be able to catpture those
+2. analytics metrics gathering will be delayed as well, so if your website has a large percentage of early bounces, your analytics reports won't be able to capture those
 
 ### What guarantee do I have that your approach will not break …some feature name…?
 
-Adobe Tags/Launch will typically wrap the [Adobe Experience Platform SDK](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/) and [Adobe Client Data Layer](https://github.com/adobe/adobe-client-data-layer), and configure your datastreams to connect to Adobe Target and Adobe Analytics.
+Adobe Tags/Launch will typically wrap the [Adobe Experience Platform SDK](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/) and [Adobe Client Data Layer](https://github.com/adobe/adobe-client-data-layer), and configure your data streams to connect to Adobe Target and Adobe Analytics.
 
-Our approach just extracts those key elements from the launch container so we can instrument those selectively at the right time in the page load for optimial performance, but we still leverage the official documented APIs and configurations as Adobe Launch would.
+Our approach just extracts those key elements from the Launch container so we can instrument those selectively at the right time in the page load for optimal performance, but we still leverage the official documented APIs and configurations as Adobe Launch would.
 
 We are basically building on top of:
 - [Top and bottom of page events](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/use-cases/top-bottom-page-events) so we can enable personalization early in the page load, and wait for the page to fully render to report metrics
@@ -269,9 +269,9 @@ On top of this, we also fine-tuned the code to:
 
 ### So what's the catch?
 
-Since we essentially just split up the Adobe Launch container to execute it in a more controlled way, not all features can be controlled from the launch UI, and some of the logic moves to the project code.
+Since we essentially just split up the Adobe Launch container to execute it in a more controlled way, not all features can be controlled from the Launch UI, and some of the logic moves to the project code.
 
-Also, some of the default Adobe Launch extensions won't work directly with such a setup.
+Also, some default Adobe Launch extensions won't work directly with such a setup.
 We recommend the following baseline:
 - Core Extension
 - Adobe Client Data Layer: so you can react to data layer events
