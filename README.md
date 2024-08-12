@@ -139,20 +139,40 @@ To properly connect and configure the plugin for your project, you'll need to ed
       }, 3000);
     }
     ```
-7. Connect your consent management system so you can track when consent is given. Typically call the `updateUserConsent` with a set of categories & booleans pairs once your consent management sends the event. Here is an example for the [consent banner block](https://github.com/adobe/aem-block-collection/pull/50) in AEM Block Collection:
-    ```js
-    function consentEventHandler(ev) {
-      const collect = ev.detail.categories.includes('CC_ANALYTICS');
-      const marketing = ev.detail.categories.includes('CC_MARKETING');
-      const personalize = ev.detail.categories.includes('CC_TARGETING');
-      const share = ev.detail.categories.includes('CC_SHARING');
-      updateUserConsent({ collect, marketing, personalize, share });
-    }
-    window.addEventListener('consent', consentEventHandler);
-    window.addEventListener('consent-updated', consentEventHandler);
-    ```
+7. Connect your consent management system to track when user consent is explicitly given. Typically call the `updateUserConsent` with a set of [categories](https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents#choices) & booleans pairs once your consent management sends the event.  
+:warning: Note that the integration will be specific to the vendor you chose. See some examples below.
 
-### Custom options
+### Integrating with consent management solutions
+
+#### AEM Consent Banner Block
+
+Here is an example for the [consent banner block](https://github.com/adobe/aem-block-collection/pull/50) in AEM Block Collection:
+```js
+function consentEventHandler(ev) {
+  const collect = ev.detail.categories.includes('CC_ANALYTICS');
+  const marketing = ev.detail.categories.includes('CC_MARKETING');
+  const personalize = ev.detail.categories.includes('CC_TARGETING');
+  const share = ev.detail.categories.includes('CC_SHARING');
+  updateUserConsent({ collect, marketing, personalize, share });
+}
+window.addEventListener('consent', consentEventHandler);
+window.addEventListener('consent-updated', consentEventHandler);
+```
+
+#### Integrating with OneTrust
+Here is an example for [OneTrust](https://www.onetrust.com):
+```js
+function consentEventHandler(ev) {
+ const groups = ev.detail;
+ const collect = groups.includes('C0002'); // Performance Cookies
+ const personalize = groups.includes('C0003'); // Functional Cookies
+ const share = groups.includes('C0008'); // Targeted Advertising and Selling/Sharing of Personal Information
+ updateUserConsent({ collect, personalize, share });
+}
+window.addEventListener('consent.onetrust', consentEventHandler);
+```
+
+### Custom plugin options
 
 There are various aspects of the plugin that you can configure via options you can pass to the `initMartech` method above.
 Here is the full list we support:
