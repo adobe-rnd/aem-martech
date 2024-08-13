@@ -1,4 +1,4 @@
-:construction: This is an early access technology and is still heavily in development. Reach out to us over slack before using it.
+:construction: This is an early access technology and is still heavily in development. Reach out to us over Slack before using it.
 
 # AEM Edge Delivery Services Marketing Technology
 
@@ -73,7 +73,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
       martechDelayed,
     } from './adobe-martech/index.js';
     ```
-3. Configure the plugin just after the import:
+3. Configure the plugin right after the import:
     ```js
     const isConsentGiven = /* hook in your consent check here to make sure you can run personalization use cases. */;
     const martechLoadedPromise = initMartech(
@@ -100,9 +100,9 @@ To properly connect and configure the plugin for your project, you'll need to ed
     );
     ```
     Note that:
-    - the WebSDK `context` flag will, by default, track the `web`, `device` and `environment` details
-    - the WebSDK `debugEnabled` flag will, by default, be set to `true` on localhost and any `.page` URL
-    - the WebSDK `defaultConsent` is set to `pending` to avoid tracking any sensitive information by default. This will also prevent personalization to properly run unless consent is explicitly given
+    - the WebSDK [`context`](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/context) flag will, by default, track the `web`, `device` and `environment` details
+    - the WebSDK [`debugEnabled`](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/debugenabled) flag will, by default, be set to `true` on localhost and any `.page` URL
+    - the WebSDK [`defaultConsent`](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/defaultconsent) is set to `pending` to avoid tracking any sensitive information by default. This will also prevent personalization to properly run unless consent is explicitly given
     - we recommend enabling `personalization` only if needed to limit the performance impact, and only if consent has been given by the user to be compliant with privacy laws. We typically recommend using a page metadata flag for the former, and integrating with your preferred consent management system APIs for the latter.
 4. Adjust your `loadEager` method so it waits for the martech to load and personalize the page:
     ```js
@@ -120,7 +120,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
       }
     }
     ```
-5. Add a reference to the lazy logic jut above the `sampleRUM('lazy');` call in your `loadLazy` method:
+5. Add a reference to the lazy logic just above the `sampleRUM('lazy');` call in your `loadLazy` method:
     ```js
     async function loadLazy(doc) {
       …
