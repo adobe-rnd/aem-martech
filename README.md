@@ -204,8 +204,8 @@ The library also exposes a few helper methods to let you quickly integrate defau
 
 1. Create a new `rum-to-analytics.js` file:
     ```js
-    import { sampleRUM } from './lib-franklin.js';
-    import { initRumTracking, pushEventToDataLayer } from './adobe-martech/index.js';
+    import { sampleRUM } from './aem.js';
+    import { initRumTracking, pushEventToDataLayer } from '../plugins/martech/src/index.js';
 
     // Define RUM tracking function
     const track = initRumTracking(sampleRUM, { withRumEnhancer: true });
@@ -296,4 +296,4 @@ We recommend the following baseline:
 - Core Extension
 - Adobe Client Data Layer: so you can react to data layer events
 - AA via AEP Web SDK: so you can have rules setting variables, product strings and send beacons
-- Mapping Table: so you can remap selected values in your data elements
+- (optionally) Mapping Table: so you can remap selected values in your data elements
