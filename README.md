@@ -58,8 +58,8 @@ To properly connect and configure the plugin for your project, you'll need to ed
 
 1. Add preload hints for the dependencies we need to speed up the page load at the end of your `head.html`:
     ```html
-    <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/index.js"/>
-    <link rel="preload" as="script" crossorigin="anonymous" href="/scripts/adobe-martech/alloy.min.js"/>
+    <link rel="preload" as="script" crossorigin="anonymous" href="/plugins/martech/src/index.js"/>
+    <link rel="preload" as="script" crossorigin="anonymous" href="/plugins/martech/src/alloy.min.js"/>
     <link rel="preconnect" href="https://edge.adobedc.net"/>
     <!-- change to adobedc.demdex.net if you enable third party cookies -->
     ```
@@ -71,7 +71,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
       martechEager,
       martechLazy,
       martechDelayed,
-    } from './adobe-martech/index.js';
+    } from '../plugins/martech/src/index.js';
     ```
 3. Configure the plugin right after the import:
     ```js
