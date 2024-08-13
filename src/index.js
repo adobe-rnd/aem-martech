@@ -88,6 +88,9 @@ function initAlloyQueue(instanceName) {
  */
 function initDatalayer(instanceName) {
   window[instanceName] ||= [];
+  if (instanceName !== 'adobeDataLayer') {
+    window[instanceName] ||= [];
+  }
 }
 
 /**
@@ -206,6 +209,11 @@ export async function sendAnalyticsEvent(xdmData, dataMapping) {
 async function loadAndConfigureDataLayer() {
   await import('./acdl.min.js');
   if (config.analytics) {
+    if (config.dataLayerInstanceName !== 'adobeDataLayer') {
+      window.adobeDataLayer.push((dl) => {
+        window[config.dataLayerInstanceName] = dl;
+      });
+    }
     window[config.dataLayerInstanceName].push((dl) => {
       dl.addEventListener('adobeDataLayer:event', (event) => {
         sendAnalyticsEvent({ eventType: event.event, ...event.xdm }, event.data);
