@@ -173,18 +173,22 @@ export function pushToDataLayer(payload) {
  * @param {String} event the name of the event to push
  * @param {Object} xdm the xdm data object to send
  * @param {Object} [data] additional data mapping for the event
+ * @param {Object} [configOverrides] optional configuration overrides
  */
-export function pushEventToDataLayer(event, xdm, data) {
-  pushToDataLayer({ event, xdm, data });
+export function pushEventToDataLayer(event, xdm, data = {}, configOverrides = {}) {
+  pushToDataLayer({
+    event, xdm, data, configOverrides,
+  });
 }
 
 /**
  * Sends an analytics event to alloy
  * @param {Object} xdmData the xdm data object to send
  * @param {Object} [dataMapping] additional data mapping for the event
+ * @param {Object} [configOverrides] optional config overrides
  * @returns {Promise<*>} a promise that the event was sent
  */
-export async function sendAnalyticsEvent(xdmData, dataMapping) {
+export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverrides = {}) {
   // eslint-disable-next-line no-console
   console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendAnalyticsEvent` method is called');
   // eslint-disable-next-line no-console
@@ -195,6 +199,7 @@ export async function sendAnalyticsEvent(xdmData, dataMapping) {
       documentUnloading: true,
       xdm: xdmData,
       data: dataMapping,
+      edgeConfigOverrides: configOverrides,
     });
   } catch (err) {
     handleRejectedPromise(new Error(err));
@@ -216,7 +221,11 @@ async function loadAndConfigureDataLayer() {
     }
     window[config.dataLayerInstanceName].push((dl) => {
       dl.addEventListener('adobeDataLayer:event', (event) => {
-        sendAnalyticsEvent({ eventType: event.event, ...event.xdm }, event.data);
+        sendAnalyticsEvent(
+          { eventType: event.event, ...event.xdm },
+          event.data,
+          event.configOverrides,
+        );
       });
     });
   }
