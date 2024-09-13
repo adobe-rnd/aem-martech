@@ -175,7 +175,7 @@ export function pushToDataLayer(payload) {
  * @param {Object} [data] additional data mapping for the event
  * @param {Object} [configOverrides] optional configuration overrides
  */
-export function pushEventToDataLayer(event, xdm, data = {}, configOverrides = {}) {
+export function pushEventToDataLayer(event, xdm, data, configOverrides) {
   pushToDataLayer({
     event, xdm, data, configOverrides,
   });
@@ -386,18 +386,6 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
       if (webSDKConfig?.onBeforeEventSend) {
         webSDKConfig?.onBeforeEventSend(payload);
       }
-
-      // Automatically track displayed propositions as part of the pageview event
-      if (payload.xdm?.eventType === 'web.webpagedetails.pageViews' && config.personalization) {
-        payload.xdm.eventType = 'decisioning.propositionDisplay';
-        payload.xdm._experience = {
-          decisioning: {
-            propositions: response.propositions
-              .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
-            propositionEventType: { display: 1 },
-          },
-        };
-      }
     },
   };
   if (config.personalization) {
@@ -448,7 +436,19 @@ export async function martechEager() {
     return promiseWithTimeout(
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
-    ).catch(() => {
+    ).then(() => {
+      // Automatically report displayed propositions
+      sendAnalyticsEvent({
+        eventType: 'decisioning.propositionDisplay',
+        _experience: {
+          decisioning: {
+            propositions: response.propositions
+              .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
+            propositionEventType: { display: 1 },
+          },
+        },
+      });
+    }).catch(() => {
       if (alloyConfig.debugEnabled) {
         // eslint-disable-next-line no-console
         console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
