@@ -139,7 +139,21 @@ To properly connect and configure the plugin for your project, you'll need to ed
       }, 3000);
     }
     ```
-7. Connect your consent management system to track when user consent is explicitly given. Typically call the `updateUserConsent` with a set of [categories](https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents#choices) & booleans pairs once your consent management sends the event.  
+7. Connect your consent management system to track when user consent is explicitly given. Typically call the `updateUserConsent` with a set of [categories](https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents#choices) & booleans pairs once your consent management sends the event. The marketing option supports granular control as in the official documentation:
+    ```js
+    updateUserConsent({
+      collect: true,
+      marketing: {
+        preferred: 'email',
+        any: false,
+        email: true,
+        push: false,
+        sms: true,
+      },
+      personalize: true,
+      share: true,
+    })
+    ```   
 :warning: Note that the integration will be specific to the vendor you chose. See some examples below.
 
 ### Integrating with consent management solutions

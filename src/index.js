@@ -253,7 +253,12 @@ async function loadAndConfigureDataLayer() {
  * https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents
  * @param {Object} config The consent config to use
  * @param {Boolean} [config.collect] Whether data collection is allowed
- * @param {Boolean} [config.marketing] Whether data can be used for marketing purposes
+ * @param {Boolean|Object} [config.marketing] Whether data can be used for marketing purposes
+ * @param {String} [config.marketing.preferred] The preferred medium for marketing communication
+ * @param {Boolean} [config.marketing.any] Whether any marketing channels are consented to or not
+ * @param {Boolean} [config.marketing.email] Whether marketing emails are consented to or not
+ * @param {Boolean} [config.marketing.push] Whether marketing push notifications are consented to
+ * @param {Boolean} [config.marketing.sms] Whether marketing messages are consented to or not
  * @param {Boolean} [config.personalize] Whether data can be used for personalization purposes
  * @param {Boolean} [config.share] Whether data can be shared/sold to 3rd parties
  * @returns {Promise<*>} a promise that the consent setting shave been updated
@@ -262,16 +267,36 @@ export async function updateUserConsent(consent) {
   // eslint-disable-next-line no-console
   console.assert(config.alloyInstanceName, 'Martech needs to be initialized before the `updateUserConsent` method is called');
 
+  let marketingConfig;
+  if (typeof consent.marketing === 'boolean') {
+    marketingConfig = {
+      any: { val: consent.marketing ? 'y' : 'n' },
+      preferred: 'email',
+    };
+  } else if (typeof consent.marketing === 'object') {
+    marketingConfig = {
+      preferred: consent.marketing.preferred || 'email',
+      any: {
+        val: consent.marketing.email ? 'y' : 'n',
+      },
+      email: {
+        val: consent.marketing.email ? 'y' : 'n',
+      },
+      push: {
+        val: consent.marketing.push ? 'y' : 'n',
+      },
+      sms: {
+        val: consent.marketing.sms ? 'y' : 'n',
+      },
+    };
+  }
   const fn = () => window[config.alloyInstanceName]('setConsent', {
     consent: [{
       standard: 'Adobe',
       version: '2.0',
       value: {
         collect: { val: consent.collect ? 'y' : 'n' },
-        marketing: {
-          any: { val: consent.marketing ? 'y' : 'n' },
-          preferred: 'email',
-        },
+        marketing: marketingConfig,
         personalize: {
           content: { val: consent.personalize ? 'y' : 'n' },
         },
