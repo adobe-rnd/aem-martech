@@ -327,7 +327,7 @@ function toCssSelector(selector) {
  * @param {String} [proposition.selector] The internal selector for the proposition
  * @returns {HTMLElement} The DOM element for the proposition
  */
-async function getElementForProposition(proposition) {
+function getElementForProposition(proposition) {
   const selector = proposition.data.prehidingSelector || toCssSelector(proposition.data.selector);
   return document.querySelector(selector);
 }
@@ -356,15 +356,17 @@ async function applyPropositions(instanceName) {
   if (!renderDecisionResponse?.propositions) {
     return [];
   }
-  const propositions = window.structuredClone(renderDecisionResponse.propositions);
+  let propositions = window.structuredClone(renderDecisionResponse.propositions)
+    .filter((p) => p.items.some((i) => i.schema === 'https://ns.adobe.com/personalization/dom-action'));
   onDecoratedElement(async () => {
     if (!propositions.length) {
       return;
     }
     await window[instanceName]('applyPropositions', { propositions });
     propositions.forEach((p) => {
-      p.items = p.items.filter((i) => i.schema !== 'https://ns.adobe.com/personalization/dom-action' || !getElementForProposition(i));
+      p.items = p.items.filter((i) => !getElementForProposition(i));
     });
+    propositions = propositions.filter((p) => p.items.length);
   });
   return renderDecisionResponse;
 }
