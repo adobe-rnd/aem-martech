@@ -73,31 +73,37 @@ To properly connect and configure the plugin for your project, you'll need to ed
       martechDelayed,
     } from '../plugins/martech/src/index.js';
     ```
-3. Configure the plugin right after the import:
+3. Configure the plugin at the top of the `loadEager` method:
     ```js
-    const isConsentGiven = /* hook in your consent check here to make sure you can run personalization use cases. */;
-    const martechLoadedPromise = initMartech(
-      // The WebSDK config
-      // Documentation: https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/overview#configure-js
-      {
-        datastreamId: /* your datastream id here, formally edgeConfigId */,
-        orgId: /* your ims org id here */,
-        onBeforeEventSend: (payload) => {
-          // set custom Target params 
-          // see doc at https://experienceleague.adobe.com/en/docs/platform-learn/migrate-target-to-websdk/send-parameters#parameter-mapping-summary
-          payload.data.__adobe.target ||= {};
-
-          // set custom Analytics params
-          // see doc at https://experienceleague.adobe.com/en/docs/analytics/implementation/aep-edge/data-var-mapping
-          payload.data.__adobe.analytics ||= {};
-        }
-      },
-      // The library config
-      {
-        launchUrls: [/* your Launch container URLs here */],
-        personalization: !!getMetadata('target') && isConsentGiven,
-      },
-    );
+    /**
+     * loads everything needed to get to LCP.
+    */
+    async function loadEager(doc) {
+      const isConsentGiven = /* hook in your consent check here to make sure you can run personalization use cases. */;
+      const martechLoadedPromise = initMartech(
+        // The WebSDK config
+        // Documentation: https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/overview#configure-js
+        {
+          datastreamId: /* your datastream id here, formally edgeConfigId */,
+          orgId: /* your ims org id here */,
+          onBeforeEventSend: (payload) => {
+            // set custom Target params 
+            // see doc at https://experienceleague.adobe.com/en/docs/platform-learn/migrate-target-to-websdk/send-parameters#parameter-mapping-summary
+            payload.data.__adobe.target ||= {};
+    
+            // set custom Analytics params
+            // see doc at https://experienceleague.adobe.com/en/docs/analytics/implementation/aep-edge/data-var-mapping
+            payload.data.__adobe.analytics ||= {};
+          }
+        },
+        // The library config
+        {
+          launchUrls: [/* your Launch container URLs here */],
+          personalization: !!getMetadata('target') && isConsentGiven,
+        },
+      );
+      …
+    }
     ```
     Note that:
     - the WebSDK [`context`](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/context) flag will, by default, track the `web`, `device` and `environment` details
