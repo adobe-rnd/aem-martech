@@ -16,8 +16,8 @@ The AEM MarTech plugin is essentially a wrapper around the Adobe Experience Plat
 It's key differentiator are:
 - 🌍 Experience Platform enabled: the library fully integrates with our main Adobe Experience Platform and all the services of our ecosystem
 - 🚀 extremely fast: the library is optimized to reduce load delay, TBT and CLS, and has minimal impact on your Core Web Vitals
-- 🍪 privacy-first: the library does not track end users by default (i.e. we do not use any cookies), and can easily be integrated with your preferred consent management system to open up more advanced use cases
-- 👻 prerender support: the library supports [speculative prerendering](https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API) out-of-the-box, and won't fire Analytics events (and artificially inflate your page views) until the page is actually viewed
+- 👤 privacy-first: the library does not track end users by default, and can easily be integrated with your preferred consent management system to open up more advanced use cases
+- 🔬 prerender support: the library supports [speculative prerendering](https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API) out-of-the-box, and won't fire Analytics events (and artificially inflate your page views) until the page is actually viewed
 
 ## Prerequisites
 
