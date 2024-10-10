@@ -408,10 +408,29 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     onBeforeEventSend: (payload) => {
       payload.data ||= {};
       payload.data.__adobe ||= {};
+      payload.data.__adobe.target ||= {};
+      payload.data.__adobe.analytics ||= {};
 
       // Let project override the data if needed
       if (webSDKConfig?.onBeforeEventSend) {
-        webSDKConfig?.onBeforeEventSend(payload);
+        try {
+          webSDKConfig?.onBeforeEventSend(payload);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('Error in "onBeforeEventSend" handler:', err);
+        }
+      }
+      if (!Object.keys(payload.data.__adobe.target).length) {
+        delete payload.data.__adobe.target;
+      }
+      if (!Object.keys(payload.data.__adobe.analytics).length) {
+        delete payload.data.__adobe.analytics;
+      }
+      if (!Object.keys(payload.data.__adobe).length) {
+        delete payload.data.__adobe;
+      }
+      if (!Object.keys(payload.data).length) {
+        delete payload.data;
       }
     },
   };
@@ -466,7 +485,7 @@ export async function martechEager() {
     ).then(() => {
       // Automatically report displayed propositions
       sendAnalyticsEvent({
-        eventType: 'decisioning.propositionDisplay',
+        eventType: 'web.webpagedetails.pageViews',
         _experience: {
           decisioning: {
             propositions: response.propositions
