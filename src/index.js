@@ -194,13 +194,21 @@ export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverri
   // eslint-disable-next-line no-console
   console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
   try {
-    // eslint-disable-next-line no-undef
-    return window[config.alloyInstanceName]('sendEvent', {
+    const fn = () => window[config.alloyInstanceName]('sendEvent', {
       documentUnloading: true,
       xdm: xdmData,
       data: dataMapping,
       edgeConfigOverrides: configOverrides,
     });
+    if (document.prerendering) {
+      return new Promise((resolve) => {
+        document.addEventListener('prerenderingchange', async () => {
+          await fn();
+          resolve();
+        }, { once: true });
+      });
+    }
+    return fn();
   } catch (err) {
     handleRejectedPromise(new Error(err));
     return Promise.reject(new Error(err));
