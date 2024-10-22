@@ -221,8 +221,10 @@ async function loadAndConfigureDataLayer() {
     }
     window[config.dataLayerInstanceName].push((dl) => {
       dl.addEventListener('adobeDataLayer:event', (event) => {
+        const eventType = event.event;
+        delete event.event;
         sendAnalyticsEvent(
-          { eventType: event.event, ...event.xdm },
+          { eventType, ...event.xdm },
           event.data,
           event.configOverrides,
         );
@@ -406,6 +408,16 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     ...getDefaultAlloyConfiguration(),
     ...webSDKConfig,
     onBeforeEventSend: (payload) => {
+      // ACDL is initialized in the lazy phase, so fetching from the JS array as a fallback during
+      // the eager phase
+      const dlState = window.adobeDataLayer.getState
+        ? window.adobeDataLayer.getState()
+        : window.adobeDataLayer[0];
+      payload.xdm = {
+        ...payload.xdm,
+        ...dlState,
+      };
+
       payload.data ||= {};
       payload.data.__adobe ||= {};
       payload.data.__adobe.target ||= {};
@@ -469,6 +481,21 @@ export function initRumTracking(sampleRUM, options = {}) {
     });
   }
   return track;
+}
+
+export async function applyPersonalization(scopes) {
+  const viewNames = Array.isArray(scopes) ? scopes : [scopes];
+  return Promise.all(viewNames.map((viewName) => window.alloy('sendEvent', {
+    renderDecisions: true,
+    personalization: {
+      sendDisplayEvent: true,
+    },
+    xdm: {
+      web: {
+        webPageDetails: { viewName },
+      },
+    },
+  })));
 }
 
 /**
