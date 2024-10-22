@@ -192,6 +192,36 @@ function consentEventHandler(ev) {
 window.addEventListener('consent.onetrust', consentEventHandler);
 ```
 
+### Working with SPA and dynamic content
+
+If your page is built dynamically with content thta renders either asynchronously or updates based on user input,
+it is likely that the default personalization applied will not be enough and you can end up with 2 possible edge cases:
+1. The personalization is not applied at all
+2. The personalization is incorrectly applied
+
+This is typical of a concurrency issue between personalization being applied and the content of the page not being ready yet
+and still updating. Some examples are:
+- blocks with lose promises that resolve after block decoration is finished
+- frontend frameworks like (p)react that update the DOM based on internal state changes to a virtual DOM
+
+For those cases, we typically recommend:
+1. Set up personalization following the SPA approach and [leverage views](https://experienceleague.adobe.com/en/docs/target/using/experiences/spa-visual-experience-composer) for the dynamic parts
+2. Import the 2 helper methods from our plugin in the blocks that represent these views:
+    ```js
+    import {
+      getPersonalizationForView,
+      applyPersonalization,
+    } from '../plugins/martech/src/index.js';
+    ```
+3. Fetch the personalization once for the view when it is initially rendered, or whenever you change the page in a paginated component:
+    ```js
+    const propositions = await getPersonalizationForView('my-view');
+    ```
+4. Apply the personalization every time there is a meaningful DOM update done by your block or component:
+    ```js
+    applyPersonalization(propositions);
+    ```
+
 ### Custom plugin options
 
 There are various aspects of the plugin that you can configure via options you can pass to the `initMartech` method above.

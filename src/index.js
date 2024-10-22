@@ -483,19 +483,31 @@ export function initRumTracking(sampleRUM, options = {}) {
   return track;
 }
 
-export async function applyPersonalization(scopes) {
-  const viewNames = Array.isArray(scopes) ? scopes : [scopes];
-  return Promise.all(viewNames.map((viewName) => window.alloy('sendEvent', {
-    renderDecisions: true,
-    personalization: {
-      sendDisplayEvent: true,
-    },
+/**
+ * Retrieves the list of propositions to personalize the specified view.
+ * @param {String} [viewName="__view__"] The view name, or defaults to the page context
+ * @returns a promise that resolves to an array of propositions to be used with
+ * `applyPersonalization`.
+ */
+export async function getPersonalizationForView(viewName = '__view__') {
+  return window[config.alloyInstanceName]('sendEvent', {
+    renderDecisions: false,
     xdm: {
       web: {
         webPageDetails: { viewName },
       },
     },
-  })));
+  }).then(({ propositions }) => propositions);
+}
+
+/**
+ * Applies the specified propositions to personalize the current page.
+ * @param {Object[]} propositions A list of propositions to be applied
+ *                                (retrieve them using `getPersonalizationForView`)
+ * @returns a promise that the propositions were applied
+ */
+export async function applyPersonalization(propositions) {
+  return window[config.alloyInstanceName]('applyPropositions', { propositions });
 }
 
 /**
