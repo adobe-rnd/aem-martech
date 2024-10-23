@@ -484,6 +484,14 @@ export function initRumTracking(sampleRUM, options = {}) {
 }
 
 /**
+ * Checks whether personalization is enabled or not.
+ * @returns a `true` if personalization is enabled, or `false` otherwise
+ */
+export function isPersonalizationEnabled() {
+  return config.personalization;
+}
+
+/**
  * Retrieves the list of propositions to personalize the specified view.
  * @param {String} [viewName="__view__"] The view name, or defaults to the page context
  * @returns a promise that resolves to an array of propositions to be used with
