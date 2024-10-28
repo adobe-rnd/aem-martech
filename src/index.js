@@ -359,16 +359,22 @@ async function applyPropositions(instanceName) {
     return [];
   }
   let propositions = window.structuredClone(renderDecisionResponse.propositions)
-    .filter((p) => p.items.some((i) => i.schema === 'https://ns.adobe.com/personalization/dom-action'));
+    .filter((p) => p.items.some(
+      (i) => i.schema === 'https://ns.adobe.com/personalization/dom-action',
+    ));
   onDecoratedElement(async () => {
     if (!propositions.length) {
       return;
     }
-    await window[instanceName]('applyPropositions', { propositions });
-    propositions.forEach((p) => {
-      p.items = p.items.filter((i) => !getElementForProposition(i));
+    const appliedPropositions = await window[instanceName](
+      'applyPropositions',
+      { propositions },
+    );
+    appliedPropositions.propositions.forEach((item) => {
+      if (item.renderAttempted) {
+        propositions = propositions.filter((p) => p.id !== item.id);
+      }
     });
-    propositions = propositions.filter((p) => p.items.length);
   });
   return renderDecisionResponse;
 }
