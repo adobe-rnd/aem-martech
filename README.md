@@ -219,7 +219,7 @@ For those cases, we typically recommend:
     ```
 4. Apply the personalization every time there is a meaningful DOM update done by your block or component:
     ```js
-    applyPersonalization(propositions);
+    applyPersonalization('my-view', propositions);
     ```
 
 ### Custom plugin options
