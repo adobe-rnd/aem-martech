@@ -497,6 +497,7 @@ export function isPersonalizationEnabled() {
   return config.personalization;
 }
 
+const viewPropositionsCache = {};
 /**
  * Retrieves the list of propositions to personalize the specified view.
  * @param {String} [viewName="__view__"] The view name, or defaults to the page context
@@ -516,12 +517,29 @@ export async function getPersonalizationForView(viewName = '__view__') {
 
 /**
  * Applies the specified propositions to personalize the current page.
+ * @param {String} viewName The view name the personalization applies to
  * @param {Object[]} propositions A list of propositions to be applied
  *                                (retrieve them using `getPersonalizationForView`)
  * @returns a promise that the propositions were applied
  */
-export async function applyPersonalization(propositions) {
-  return window[config.alloyInstanceName]('applyPropositions', { propositions });
+export async function applyPersonalization(viewName, propositions) {
+  if (!propositions.length) {
+    return null;
+  }
+  if (!viewPropositionsCache[viewName]) {
+    viewPropositionsCache[viewName] = propositions;
+  }
+  const appliedPropositions = await window[config.alloyInstanceName](
+    'applyPropositions',
+    { propositions: viewPropositionsCache[viewName] },
+  );
+  appliedPropositions.propositions.forEach((item) => {
+    if (item.renderAttempted) {
+      viewPropositionsCache[viewName] = viewPropositionsCache[viewName]
+        .filter((p) => p.id !== item.id);
+    }
+  });
+  return appliedPropositions;
 }
 
 /**
