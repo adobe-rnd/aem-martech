@@ -10,18 +10,24 @@
  *                               (defaults to true)
  * @property {String} dataLayerInstanceName The name of the data ayer instance in the global scope
  *                                          (defaults to "adobeDataLayer")
+ * @property {Boolean} includeDataLayerState Whether to include the datalayer state on every
+ *                                           event that is sent by alloy (defaults to true)
  * @property {String[]} launchUrls A list of launch container URLs to load (defults to empty list)
  * @property {Boolean} personalization Indicates whether Adobe Target should be enabled
  *                                     (defaults to true)
  * @property {Number} personalizationTimeout Indicates the amount of time to wait before bailing
  *                                           out on the personalization and continue rendering the
  *                                           page (defaults to 1s)
+ * @property {Boolean} performanceOptimized Whether to use the agressive performance optimized
+ *                                          instrumentation, or the more traditional alloy approach
+ *                                          (defaults to true)
  */
 export const DEFAULT_CONFIG = {
   analytics: true,
   alloyInstanceName: 'alloy',
   dataLayer: true,
   dataLayerInstanceName: 'adobeDataLayer',
+  includeDataLayerState: true,
   launchUrls: [],
   personalization: true,
   personalizationTimeout: 1000,
@@ -404,13 +410,15 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     onBeforeEventSend: (payload) => {
       // ACDL is initialized in the lazy phase, so fetching from the JS array as a fallback during
       // the eager phase
-      const dlState = window.adobeDataLayer.getState
-        ? window.adobeDataLayer.getState()
-        : window.adobeDataLayer[0];
-      payload.xdm = {
-        ...payload.xdm,
-        ...dlState,
-      };
+      if (config.includeDataLayerState) {
+        const dlState = window.adobeDataLayer.getState
+          ? window.adobeDataLayer.getState()
+          : window.adobeDataLayer[0];
+        payload.xdm = {
+          ...payload.xdm,
+          ...dlState,
+        };
+      }
 
       payload.data ||= {};
       payload.data.__adobe ||= {};
