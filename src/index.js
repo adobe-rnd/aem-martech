@@ -25,6 +25,7 @@ export const DEFAULT_CONFIG = {
   launchUrls: [],
   personalization: true,
   personalizationTimeout: 1000,
+  performanceOptimized: true,
 };
 
 let config;
@@ -182,6 +183,15 @@ export function pushEventToDataLayer(event, xdm, data, configOverrides) {
 }
 
 /**
+ * Just a proxy method for the `alloy('sendEvent', …)` method
+ * @param {Object} payload the payload to send
+ * @returns {Promise<*>} a promise that the event was sent
+ */
+export async function sendEvent(payload) {
+  return window[config.alloyInstanceName]('sendEvent', payload);
+}
+
+/**
  * Sends an analytics event to alloy
  * @param {Object} xdmData the xdm data object to send
  * @param {Object} [dataMapping] additional data mapping for the event
@@ -194,8 +204,7 @@ export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverri
   // eslint-disable-next-line no-console
   console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
   try {
-    // eslint-disable-next-line no-undef
-    return window[config.alloyInstanceName]('sendEvent', {
+    return sendEvent({
       documentUnloading: true,
       xdm: xdmData,
       data: dataMapping,
@@ -313,27 +322,6 @@ export async function updateUserConsent(consent) {
   return Promise.resolve();
 }
 
-/**
- * Converts an internal element selector to a proper CSS selector.
- * @param {String} selector the internal selector
- * @returns {String} the corresponding CSS selector
- */
-function toCssSelector(selector) {
-  return selector.replace(/(\.\S+)?:eq\((\d+)\)/g, (_, clss, i) => `:nth-child(${Number(i) + 1}${clss ? ` of ${clss})` : ''}`);
-}
-
-/**
- * Find the element for the specified proposition.
- * @param {Object} proposition The proprosition for the element
- * @param {String} [proposition.cssSelector] The CSS selector for the proposition
- * @param {String} [proposition.selector] The internal selector for the proposition
- * @returns {HTMLElement} The DOM element for the proposition
- */
-function getElementForProposition(proposition) {
-  const selector = proposition.data.prehidingSelector || toCssSelector(proposition.data.selector);
-  return document.querySelector(selector);
-}
-
 let response;
 
 /**
@@ -347,7 +335,7 @@ let response;
 async function applyPropositions(instanceName) {
   // Get the decisions, but don't render them automatically
   // so we can hook up into the AEM EDS page load sequence
-  const renderDecisionResponse = await window[instanceName]('sendEvent', {
+  const renderDecisionResponse = await sendEvent({
     type: 'decisioning.propositionFetch',
     renderDecisions: false,
     personalization: {
@@ -505,7 +493,7 @@ const viewPropositionsCache = {};
  * `applyPersonalization`.
  */
 export async function getPersonalizationForView(viewName = '__view__') {
-  return window[config.alloyInstanceName]('sendEvent', {
+  return sendEvent({
     renderDecisions: false,
     xdm: {
       web: {
@@ -522,7 +510,7 @@ export async function getPersonalizationForView(viewName = '__view__') {
  *                                (retrieve them using `getPersonalizationForView`)
  * @returns a promise that the propositions were applied
  */
-export async function applyPersonalization(viewName, propositions) {
+export async function applyPersonalization(viewName, propositions, forcibly = false) {
   if (!propositions.length) {
     return null;
   }
@@ -531,8 +519,17 @@ export async function applyPersonalization(viewName, propositions) {
   }
   const appliedPropositions = await window[config.alloyInstanceName](
     'applyPropositions',
-    { propositions: viewPropositionsCache[viewName] },
+    { propositions: forcibly ? propositions : viewPropositionsCache[viewName] },
   );
+  sendAnalyticsEvent({
+    eventType: 'decisioning.propositionDisplay',
+    _experience: {
+      decisioning: {
+        propositions: appliedPropositions.propositions.filter((p) => p.renderAttempted),
+        propositionEventType: { display: 1 },
+      },
+    },
+  });
   appliedPropositions.propositions.forEach((item) => {
     if (item.renderAttempted) {
       viewPropositionsCache[viewName] = viewPropositionsCache[viewName]
@@ -547,7 +544,7 @@ export async function applyPersonalization(viewName, propositions) {
  * @returns a promise that the eager logic was executed
  */
 export async function martechEager() {
-  if (config.personalization) {
+  if (config.personalization && config.performanceOptimized) {
     // eslint-disable-next-line no-console
     console.assert(window.alloy, 'Martech needs to be initialized before the `martechEager` method is called');
     return promiseWithTimeout(
@@ -572,6 +569,9 @@ export async function martechEager() {
       }
     });
   }
+  if (config.personalization) {
+    document.body.style.visibility = 'hidden';
+  }
   return Promise.resolve();
 }
 
@@ -586,6 +586,21 @@ export async function martechLazy() {
 
   if (!config.personalization) {
     await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+  } else if (!config.performanceOptimized) {
+    const renderDecisionResponse = await sendEvent({ renderDecisions: true, decisionScopes: ['__view__'] });
+    response = renderDecisionResponse;
+    document.body.style.visibility = null;
+    // Automatically report displayed propositions
+    sendAnalyticsEvent({
+      eventType: 'web.webpagedetails.pageViews',
+      _experience: {
+        decisioning: {
+          propositions: response.propositions
+            .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
+          propositionEventType: { display: 1 },
+        },
+      },
+    });
   }
 }
 
