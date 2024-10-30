@@ -508,6 +508,8 @@ export async function getPersonalizationForView(viewName = '__view__') {
  * @param {String} viewName The view name the personalization applies to
  * @param {Object[]} propositions A list of propositions to be applied
  *                                (retrieve them using `getPersonalizationForView`)
+ * @param {Boolean} forcibly Whether to forcibly re-apply the propositions, or only do it once
+ *                           and cache the result
  * @returns a promise that the propositions were applied
  */
 export async function applyPersonalization(viewName, propositions, forcibly = false) {
