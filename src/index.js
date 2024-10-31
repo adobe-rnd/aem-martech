@@ -15,12 +15,12 @@
  * @property {String[]} launchUrls A list of launch container URLs to load (defults to empty list)
  * @property {Boolean} personalization Indicates whether Adobe Target should be enabled
  *                                     (defaults to true)
- * @property {Number} personalizationTimeout Indicates the amount of time to wait before bailing
- *                                           out on the personalization and continue rendering the
- *                                           page (defaults to 1s)
  * @property {Boolean} performanceOptimized Whether to use the agressive performance optimized
  *                                          instrumentation, or the more traditional alloy approach
  *                                          (defaults to true)
+ * @property {Number} personalizationTimeout Indicates the amount of time to wait before bailing
+ *                                           out on the personalization and continue rendering the
+ *                                           page (defaults to 1s)
  */
 export const DEFAULT_CONFIG = {
   analytics: true,
@@ -30,8 +30,8 @@ export const DEFAULT_CONFIG = {
   includeDataLayerState: true,
   launchUrls: [],
   personalization: true,
-  personalizationTimeout: 1000,
   performanceOptimized: true,
+  personalizationTimeout: 1000,
 };
 
 let config;
