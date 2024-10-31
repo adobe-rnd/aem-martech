@@ -500,53 +500,28 @@ const viewPropositionsCache = {};
  * @returns a promise that resolves to an array of propositions to be used with
  * `applyPersonalization`.
  */
-export async function getPersonalizationForView(viewName = '__view__') {
+export async function getPersonalizationForView(viewName) {
+  // eslint-disable-next-line no-console
+  console.assert(viewName, 'The `viewName` parameter needs to be defined');
   return sendEvent({
-    renderDecisions: false,
+    renderDecisions: true,
     xdm: {
       web: {
         webPageDetails: { viewName },
       },
     },
-  }).then(({ propositions }) => propositions);
+  });
 }
 
 /**
  * Applies the specified propositions to personalize the current page.
  * @param {String} viewName The view name the personalization applies to
- * @param {Object[]} propositions A list of propositions to be applied
- *                                (retrieve them using `getPersonalizationForView`)
- * @param {Boolean} forcibly Whether to forcibly re-apply the propositions, or only do it once
- *                           and cache the result
  * @returns a promise that the propositions were applied
  */
-export async function applyPersonalization(viewName, propositions, forcibly = false) {
-  if (!propositions.length) {
-    return null;
-  }
-  if (!viewPropositionsCache[viewName]) {
-    viewPropositionsCache[viewName] = propositions;
-  }
-  const appliedPropositions = await window[config.alloyInstanceName](
-    'applyPropositions',
-    { propositions: forcibly ? propositions : viewPropositionsCache[viewName] },
-  );
-  sendAnalyticsEvent({
-    eventType: 'decisioning.propositionDisplay',
-    _experience: {
-      decisioning: {
-        propositions: appliedPropositions.propositions.filter((p) => p.renderAttempted),
-        propositionEventType: { display: 1 },
-      },
-    },
-  });
-  appliedPropositions.propositions.forEach((item) => {
-    if (item.renderAttempted) {
-      viewPropositionsCache[viewName] = viewPropositionsCache[viewName]
-        .filter((p) => p.id !== item.id);
-    }
-  });
-  return appliedPropositions;
+export async function applyPersonalization(viewName) {
+  // eslint-disable-next-line no-console
+  console.assert(viewName, 'The `viewName` parameter needs to be defined');
+  return window[config.alloyInstanceName]('applyPropositions', { viewName });
 }
 
 /**
@@ -601,16 +576,7 @@ export async function martechLazy() {
     response = renderDecisionResponse;
     document.body.style.visibility = null;
     // Automatically report displayed propositions
-    sendAnalyticsEvent({
-      eventType: 'web.webpagedetails.pageViews',
-      _experience: {
-        decisioning: {
-          propositions: response.propositions
-            .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
-          propositionEventType: { display: 1 },
-        },
-      },
-    });
+    sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
   }
 }
 
