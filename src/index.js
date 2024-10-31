@@ -10,9 +10,14 @@
  *                               (defaults to true)
  * @property {String} dataLayerInstanceName The name of the data ayer instance in the global scope
  *                                          (defaults to "adobeDataLayer")
+ * @property {Boolean} includeDataLayerState Whether to include the datalayer state on every
+ *                                           event that is sent by alloy (defaults to true)
  * @property {String[]} launchUrls A list of launch container URLs to load (defults to empty list)
  * @property {Boolean} personalization Indicates whether Adobe Target should be enabled
  *                                     (defaults to true)
+ * @property {Boolean} performanceOptimized Whether to use the agressive performance optimized
+ *                                          instrumentation, or the more traditional alloy approach
+ *                                          (defaults to true)
  * @property {Number} personalizationTimeout Indicates the amount of time to wait before bailing
  *                                           out on the personalization and continue rendering the
  *                                           page (defaults to 1s)
@@ -22,8 +27,10 @@ export const DEFAULT_CONFIG = {
   alloyInstanceName: 'alloy',
   dataLayer: true,
   dataLayerInstanceName: 'adobeDataLayer',
+  includeDataLayerState: true,
   launchUrls: [],
   personalization: true,
+  performanceOptimized: true,
   personalizationTimeout: 1000,
 };
 
@@ -182,6 +189,15 @@ export function pushEventToDataLayer(event, xdm, data, configOverrides) {
 }
 
 /**
+ * Just a proxy method for the `alloy('sendEvent', …)` method
+ * @param {Object} payload the payload to send
+ * @returns {Promise<*>} a promise that the event was sent
+ */
+export async function sendEvent(payload) {
+  return window[config.alloyInstanceName]('sendEvent', payload);
+}
+
+/**
  * Sends an analytics event to alloy
  * @param {Object} xdmData the xdm data object to send
  * @param {Object} [dataMapping] additional data mapping for the event
@@ -194,8 +210,7 @@ export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverri
   // eslint-disable-next-line no-console
   console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
   try {
-    // eslint-disable-next-line no-undef
-    return window[config.alloyInstanceName]('sendEvent', {
+    return sendEvent({
       documentUnloading: true,
       xdm: xdmData,
       data: dataMapping,
@@ -313,27 +328,6 @@ export async function updateUserConsent(consent) {
   return Promise.resolve();
 }
 
-/**
- * Converts an internal element selector to a proper CSS selector.
- * @param {String} selector the internal selector
- * @returns {String} the corresponding CSS selector
- */
-function toCssSelector(selector) {
-  return selector.replace(/(\.\S+)?:eq\((\d+)\)/g, (_, clss, i) => `:nth-child(${Number(i) + 1}${clss ? ` of ${clss})` : ''}`);
-}
-
-/**
- * Find the element for the specified proposition.
- * @param {Object} proposition The proprosition for the element
- * @param {String} [proposition.cssSelector] The CSS selector for the proposition
- * @param {String} [proposition.selector] The internal selector for the proposition
- * @returns {HTMLElement} The DOM element for the proposition
- */
-function getElementForProposition(proposition) {
-  const selector = proposition.data.prehidingSelector || toCssSelector(proposition.data.selector);
-  return document.querySelector(selector);
-}
-
 let response;
 
 /**
@@ -347,7 +341,7 @@ let response;
 async function applyPropositions(instanceName) {
   // Get the decisions, but don't render them automatically
   // so we can hook up into the AEM EDS page load sequence
-  const renderDecisionResponse = await window[instanceName]('sendEvent', {
+  const renderDecisionResponse = await sendEvent({
     type: 'decisioning.propositionFetch',
     renderDecisions: false,
     personalization: {
@@ -416,13 +410,15 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     onBeforeEventSend: (payload) => {
       // ACDL is initialized in the lazy phase, so fetching from the JS array as a fallback during
       // the eager phase
-      const dlState = window.adobeDataLayer.getState
-        ? window.adobeDataLayer.getState()
-        : window.adobeDataLayer[0];
-      payload.xdm = {
-        ...payload.xdm,
-        ...dlState,
-      };
+      if (config.includeDataLayerState) {
+        const dlState = window.adobeDataLayer.getState
+          ? window.adobeDataLayer.getState()
+          : window.adobeDataLayer[0];
+        payload.xdm = {
+          ...payload.xdm,
+          ...dlState,
+        };
+      }
 
       payload.data ||= {};
       payload.data.__adobe ||= {};
@@ -504,42 +500,28 @@ const viewPropositionsCache = {};
  * @returns a promise that resolves to an array of propositions to be used with
  * `applyPersonalization`.
  */
-export async function getPersonalizationForView(viewName = '__view__') {
-  return window[config.alloyInstanceName]('sendEvent', {
-    renderDecisions: false,
+export async function getPersonalizationForView(viewName) {
+  // eslint-disable-next-line no-console
+  console.assert(viewName, 'The `viewName` parameter needs to be defined');
+  return sendEvent({
+    renderDecisions: true,
     xdm: {
       web: {
         webPageDetails: { viewName },
       },
     },
-  }).then(({ propositions }) => propositions);
+  });
 }
 
 /**
  * Applies the specified propositions to personalize the current page.
  * @param {String} viewName The view name the personalization applies to
- * @param {Object[]} propositions A list of propositions to be applied
- *                                (retrieve them using `getPersonalizationForView`)
  * @returns a promise that the propositions were applied
  */
-export async function applyPersonalization(viewName, propositions) {
-  if (!propositions.length) {
-    return null;
-  }
-  if (!viewPropositionsCache[viewName]) {
-    viewPropositionsCache[viewName] = propositions;
-  }
-  const appliedPropositions = await window[config.alloyInstanceName](
-    'applyPropositions',
-    { propositions: viewPropositionsCache[viewName] },
-  );
-  appliedPropositions.propositions.forEach((item) => {
-    if (item.renderAttempted) {
-      viewPropositionsCache[viewName] = viewPropositionsCache[viewName]
-        .filter((p) => p.id !== item.id);
-    }
-  });
-  return appliedPropositions;
+export async function applyPersonalization(viewName) {
+  // eslint-disable-next-line no-console
+  console.assert(viewName, 'The `viewName` parameter needs to be defined');
+  return window[config.alloyInstanceName]('applyPropositions', { viewName });
 }
 
 /**
@@ -547,7 +529,7 @@ export async function applyPersonalization(viewName, propositions) {
  * @returns a promise that the eager logic was executed
  */
 export async function martechEager() {
-  if (config.personalization) {
+  if (config.personalization && config.performanceOptimized) {
     // eslint-disable-next-line no-console
     console.assert(window.alloy, 'Martech needs to be initialized before the `martechEager` method is called');
     return promiseWithTimeout(
@@ -572,6 +554,9 @@ export async function martechEager() {
       }
     });
   }
+  if (config.personalization) {
+    document.body.style.visibility = 'hidden';
+  }
   return Promise.resolve();
 }
 
@@ -586,6 +571,12 @@ export async function martechLazy() {
 
   if (!config.personalization) {
     await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+  } else if (!config.performanceOptimized) {
+    const renderDecisionResponse = await sendEvent({ renderDecisions: true, decisionScopes: ['__view__'] });
+    response = renderDecisionResponse;
+    document.body.style.visibility = null;
+    // Automatically report displayed propositions
+    sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
   }
 }
 

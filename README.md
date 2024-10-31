@@ -215,11 +215,11 @@ For those cases, we typically recommend:
     ```
 3. Fetch the personalization once for the view when it is initially rendered, or whenever you change the page in a paginated component:
     ```js
-    const propositions = await getPersonalizationForView('my-view');
+    await getPersonalizationForView('my-view');
     ```
 4. Apply the personalization every time there is a meaningful DOM update done by your block or component:
     ```js
-    applyPersonalization('my-view', propositions);
+    applyPersonalization('my-view');
     ```
 
 ### Custom plugin options
@@ -241,8 +241,10 @@ initMartech(
     alloyInstanceName: 'alloy', // the name of the global WebSDK instance
     dataLayer: true, // whether to use the Adobe Client Data Layer (ACDL)
     dataLayerInstanceName: 'adobeDataLayer', // the name of the global ACDL instance
+    includeDataLayerState: true, // whether to include the whole data layer state on every event sent
     launchUrls: [], // the list of Launch containers to load
     personalization: true, // whether to apply page personalization from Adobe Target (AT) or Adobe Journey Optimizer (AJO)
+    performanceOptimized: true, // whether to use the agressive performance optimized approach or more traditional
     personalizationTimeout: 1000, // the amount of time to wait (in ms) before bailing out and continuing page rendering
   },
 );
