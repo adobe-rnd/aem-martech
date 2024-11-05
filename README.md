@@ -194,7 +194,7 @@ window.addEventListener('consent.onetrust', consentEventHandler);
 
 ### Working with SPA and dynamic content
 
-If your page is built dynamically with content thta renders either asynchronously or updates based on user input,
+If your page is built dynamically with content that renders either asynchronously or updates based on user input,
 it is likely that the default personalization applied will not be enough and you can end up with 2 possible edge cases:
 1. The personalization is not applied at all
 2. The personalization is incorrectly applied
@@ -209,6 +209,7 @@ For those cases, we typically recommend:
 2. Import the 2 helper methods from our plugin in the blocks that represent these views:
     ```js
     import {
+      isPersonalizationEnabled,
       getPersonalizationForView,
       applyPersonalization,
     } from '../plugins/martech/src/index.js';
@@ -217,6 +218,26 @@ For those cases, we typically recommend:
     ```js
     await getPersonalizationForView('my-view');
     ```
+    We recommend directly including this in the `loadEager` logic so the default view immediately get the Target propositions:
+    ```js
+    /**
+     * loads everything needed to get to LCP.
+    */
+    async function loadEager(doc) {
+      …
+      if (main) {
+        decorateMain(main);
+        await Promise.all([
+          martechLoadedPromise.then(martechEager),
+          waitForLCP(LCP_BLOCKS),
+        ]);
+        if (isPersonalizationEnabled()) {
+          getPersonalizationForView('my-view');
+        }
+      }
+    }
+    ```
+    You can for instance map the page template to a given view name, or have the view name directly set in the page metadata.
 4. Apply the personalization every time there is a meaningful DOM update done by your block or component:
     ```js
     applyPersonalization('my-view');
