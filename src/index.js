@@ -194,6 +194,8 @@ export function pushEventToDataLayer(event, xdm, data, configOverrides) {
  * @returns {Promise<*>} a promise that the event was sent
  */
 export async function sendEvent(payload) {
+  // eslint-disable-next-line no-console
+  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendEvent` method is called');
   return window[config.alloyInstanceName]('sendEvent', payload);
 }
 
@@ -422,8 +424,10 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
 
       payload.data ||= {};
       payload.data.__adobe ||= {};
-      payload.data.__adobe.target ||= {};
+      // Documentation: https://experienceleague.adobe.com/en/docs/analytics/implementation/aep-edge/data-var-mapping
       payload.data.__adobe.analytics ||= {};
+      // Documentation: https://experienceleague.adobe.com/en/docs/platform-learn/migrate-target-to-websdk/send-parameters
+      payload.data.__adobe.target ||= {};
 
       // Let project override the data if needed
       if (webSDKConfig?.onBeforeEventSend) {
@@ -493,10 +497,9 @@ export function isPersonalizationEnabled() {
   return config.personalization;
 }
 
-const viewPropositionsCache = {};
 /**
  * Retrieves the list of propositions to personalize the specified view.
- * @param {String} [viewName="__view__"] The view name, or defaults to the page context
+ * @param {String} viewName The view name, or defaults to the page context
  * @returns a promise that resolves to an array of propositions to be used with
  * `applyPersonalization`.
  */
@@ -569,8 +572,9 @@ export async function martechLazy() {
     await loadAndConfigureDataLayer({});
   }
 
-  if (!config.personalization) {
+  if (!config.personalization && config.performanceOptimized) {
     await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+    sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
   } else if (!config.performanceOptimized) {
     const renderDecisionResponse = await sendEvent({ renderDecisions: true, decisionScopes: ['__view__'] });
     response = renderDecisionResponse;
