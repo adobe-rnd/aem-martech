@@ -94,7 +94,35 @@ To properly connect and configure the plugin for your project, you'll need to ed
             // set custom Analytics params
             // see doc at https://experienceleague.adobe.com/en/docs/analytics/implementation/aep-edge/data-var-mapping
             payload.data.__adobe.analytics ||= {};
-          }
+          },
+
+          // set custom datastream overrides
+          // see doc at:
+          // - https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/datastream-overrides
+          // - https://experienceleague.adobe.com/en/docs/experience-platform/datastreams/overrides
+          edgeConfigOverrides: {
+            // Override the datastream id
+            // datastreamId: '...'
+
+            // Override AEP event datasets
+            // com_adobe_experience_platform: {
+            //   datasets: {
+            //     event: {
+            //       datasetId: '...'
+            //     }
+            //   }
+            // },
+
+            // Override the Analytics report suites
+            // com_adobe_analytics: {
+            //   reportSuites: ['...']
+            // },
+
+            // Override the Target property token
+            // com_adobe_target: {
+            //   propertyToken: '...'
+            // }
+          },
         },
         // The library config
         {
