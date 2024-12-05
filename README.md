@@ -51,6 +51,10 @@ fatal: can't squash-merge: 'plugins/martech' was never added
 ```
 you can just delete the folder and re-add the plugin via the `git subtree add` command above.
 
+If you use some ELint at the project level (or equivalent), make sure to update ignore minified files in your `.eslintignore`:
+```
+*.min.js
+```
 
 ## Project instrumentation
 
