@@ -224,6 +224,34 @@ function consentEventHandler(ev) {
 window.addEventListener('consent.onetrust', consentEventHandler);
 ```
 
+### Automatic forwarding of events
+
+The library is built to automatically foward all events that are pushed to the datalayer directly to Analyics/CJS.
+So all you have to do is:
+```js
+window.adobeDatalayer.push({
+  xdm: { ... }, // the XDM schema to push
+  data: { ... }, // The data mappings to use
+  configOverrides: { ... }, // The possible edge config overrides, like datastreamId overrides
+})
+```
+
+you can also just use our helper methods for this, that simplifies the input a bit:
+```js
+pushEventToDataLayer('my-event', xdm, data, configOverrides);
+```
+or directly leverage:
+```js
+pushToDataLayer({
+  xdm: { ... }, // the XDM schema to push
+  data: { ... }, // The data mappings to use
+  configOverrides: { ... }, // The possible edge config overrides, like datastreamId overrides
+})
+```
+which is just a proxy for `window.adobeDatalayer.push`.
+
+:warning: When working with overrides, the `onBeforeEventSend` hook does not directly support those, so you have to handle those in the outer call to one of the methods above.
+
 ### Working with SPA and dynamic content
 
 If your page is built dynamically with content that renders either asynchronously or updates based on user input,
