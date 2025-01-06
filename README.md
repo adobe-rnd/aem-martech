@@ -130,7 +130,7 @@ To properly connect and configure the plugin for your project, you'll need to ed
         },
         // The library config
         {
-          launchUrls: [/* your Launch container URLs here */],
+          launchUrls: [/* your Launch script URLs here */],
           personalization: !!getMetadata('target') && isConsentGiven,
         },
       );
@@ -323,7 +323,7 @@ initMartech(
     dataLayer: true, // whether to use the Adobe Client Data Layer (ACDL)
     dataLayerInstanceName: 'adobeDataLayer', // the name of the global ACDL instance
     includeDataLayerState: true, // whether to include the whole data layer state on every event sent
-    launchUrls: [], // the list of Launch containers to load
+    launchUrls: [], // the list of Launch scripts to load
     personalization: true, // whether to apply page personalization from Adobe Target (AT) or Adobe Journey Optimizer (AJO)
     performanceOptimized: true, // whether to use the agressive performance optimized approach or more traditional
     personalizationTimeout: 1000, // the amount of time to wait (in ms) before bailing out and continuing page rendering
@@ -399,7 +399,7 @@ The library also exposes a few helper methods to let you quickly integrate defau
 
 Typical instrumentations based on a centralized approach using Adobe Tag/Launch that is loaded early in the page life-cycle essentially impacts the user experience negatively for the benefit of marketing metrics. Core Web Vitals are noticeably impacted, and Google PageSpeed reports typically show a drop of 20~40 points in the performance category.
 
-### But can't I just defer the launch container to solve this?
+### But can't I just defer the launch script to solve this?
 
 This can indeed solve the issue in some cases, but comes with some drawbacks:
 1. personalization use cases will be delayed as well, so you'll introduce content flickering when the personalization kicks in
