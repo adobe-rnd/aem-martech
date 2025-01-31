@@ -38,6 +38,7 @@ let config;
 let alloyConfig;
 let isAlloyConfigured = false;
 const pendingAlloyCommands = [];
+const pendingDatalayerEvents = [];
 
 /**
  * Runs a promise with a timeout that rejects it if the time has passed.
@@ -131,6 +132,7 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
     await window[instanceName]('configure', webSDKConfig);
     isAlloyConfigured = true;
     pendingAlloyCommands.forEach((fn) => fn());
+    pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent.apply(null, args));
   } catch (err) {
     handleRejectedPromise(new Error(err));
   }
@@ -240,11 +242,16 @@ async function loadAndConfigureDataLayer() {
       dl.addEventListener('adobeDataLayer:event', (event) => {
         const eventType = event.event;
         delete event.event;
-        sendAnalyticsEvent(
+        const args = [
           { eventType, ...event.xdm },
           event.data,
           event.configOverrides,
-        );
+        ];
+        if (!isAlloyConfigured) {
+          pendingDatalayerEvents.push(args);
+        } else {
+          sendAnalyticsEvent.apply(null, args);
+        }
       });
     });
   }
