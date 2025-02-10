@@ -33,6 +33,8 @@ We also recommend using a proper consent management system. If not, make sure to
 
 ## Installation
 
+We have a comprehensive [tutorial on Experience League](https://experienceleague.adobe.com/en/docs/platform-learn/tutorial-one-adobe/csc/module21/ex6), or you can just follow the steps below.
+
 Add the plugin to your AEM project by running:
 ```sh
 git subtree add --squash --prefix plugins/martech git@github.com:adobe-rnd/aem-martech.git main
