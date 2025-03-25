@@ -329,71 +329,32 @@ initMartech(
     personalization: true, // whether to apply page personalization from Adobe Target (AT) or Adobe Journey Optimizer (AJO)
     performanceOptimized: true, // whether to use the agressive performance optimized approach or more traditional
     personalizationTimeout: 1000, // the amount of time to wait (in ms) before bailing out and continuing page rendering
+    shouldProcessEvent: (payload) => true, // whether to process the datalayer event and forward it to the backend
   },
 );
 ```
 
-### Integrating Adobe EDS RUM events with Adobe Analytics
+#### Selectively passing datalayer events to the backend
 
-The library also exposes a few helper methods to let you quickly integrate default RUM events with your Adobe Analytics solution.
+By default, all datalayer events are processed and forwarded to the backend. You can filter which events should be processed by providing a function that returns `true` for events that should be processed, and `false` for events that should be ignored.
 
-1. Create a new `rum-to-analytics.js` file:
-    ```js
-    import { sampleRUM } from './aem.js';
-    import { initRumTracking, pushEventToDataLayer } from '../plugins/martech/src/index.js';
+For instance, if you want to only process events that have a specific event type:
 
-    // Define RUM tracking function
-    const track = initRumTracking(sampleRUM, { withRumEnhancer: true });
-
-    // Track page views when the page is fully rendered
-    // The data will be automatically enriched with applied propositions for personalization use cases
-    track('lazy', () => {
-      pushEventToDataLayer(
-        'web.webpagedetails.pageViews', {
-          web: {
-            webPageDetails: {
-              pageViews: { value: 1 },
-              isHomePage: window.location.pathname === '/',
-            },
-          },
-        },
-        {
-          __adobe: {
-            analytics: {
-              // see documentation at https://experienceleague.adobe.com/en/docs/analytics/implementation/aep-edge/data-var-mapping
-            },
-          },
-        });
-    });
-
-    track('click', ({source, target}) => {
-      pushEventToDataLayer('web.webinteraction.linkClicks', {
-        web: {
-          webInteraction: {
-            URL: target,
-            name: source,
-            linkClicks: { value: 1 },
-            type: target && new URL(target).origin !== window.location.origin
-              ? 'exit'
-              : 'other',
-          },
-        },
-      });
-    });
-
-    // see documentation at https://www.aem.live/developer/rum#checkpoints for other events you can track
-    ```
-2. Load the `rum-to-analytics.js` file before calling `martechLazy()` in your `loadLazy` method:
-    ```js
-    async function loadLazy(doc) {
-      …
-      await import('./rum-to-analytics.js');
-      await martechLazy();
-      sampleRUM('lazy');
-      …
-    }
-    ```
-
+```js
+// Example of configuring the martech library with a custom event filter
+initMartech({
+  datastreamId: 'abc123',
+  orgId: 'ABC@AdobeOrg'
+}, {
+  // Only process page view events and add-to-cart events
+  shouldProcessEvent: (payload) => {
+    return [
+      'web.webpagedetails.pageViews',
+      'commerce.productListAdds'
+    ].includes(payload.event);
+  }
+});
+```
 
 ## FAQ
 

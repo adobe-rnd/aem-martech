@@ -21,6 +21,11 @@
  * @property {Number} personalizationTimeout Indicates the amount of time to wait before bailing
  *                                           out on the personalization and continue rendering the
  *                                           page (defaults to 1s)
+ * @property {Function} shouldProcessEvent Optional function to filter which events are sent to
+ *                                         analytics. It gets the datalayer event as a parameter
+ *                                         and returns a boolean. Return true to process the event,
+ *                                         false to ignore it. The default is a function that
+ *                                         always returns true.
  */
 export const DEFAULT_CONFIG = {
   analytics: true,
@@ -32,6 +37,7 @@ export const DEFAULT_CONFIG = {
   personalization: true,
   performanceOptimized: true,
   personalizationTimeout: 1000,
+  shouldProcessEvent: () => true,
 };
 
 let config;
@@ -119,6 +125,42 @@ function getDefaultAlloyConfiguration() {
 }
 
 /**
+ * Just a proxy method for the `alloy('sendEvent', …)` method
+ * @param {Object} payload the payload to send
+ * @returns {Promise<*>} a promise that the event was sent
+ */
+export async function sendEvent(payload) {
+  // eslint-disable-next-line no-console
+  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendEvent` method is called');
+  return window[config.alloyInstanceName]('sendEvent', payload);
+}
+
+/**
+ * Sends an analytics event to alloy
+ * @param {Object} xdmData the xdm data object to send
+ * @param {Object} [dataMapping] additional data mapping for the event
+ * @param {Object} [configOverrides] optional config overrides
+ * @returns {Promise<*>} a promise that the event was sent
+ */
+export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverrides = {}) {
+  // eslint-disable-next-line no-console
+  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendAnalyticsEvent` method is called');
+  // eslint-disable-next-line no-console
+  console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
+  try {
+    return sendEvent({
+      documentUnloading: true,
+      xdm: xdmData,
+      data: dataMapping,
+      edgeConfigOverrides: configOverrides,
+    });
+  } catch (err) {
+    handleRejectedPromise(new Error(err));
+    return Promise.reject(new Error(err));
+  }
+}
+
+/**
  * Loads the alloy library and configures it.
  * Documentation:
  * https://experienceleague.adobe.com/docs/experience-platform/edge/fundamentals/configuring-the-sdk.html
@@ -132,7 +174,7 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
     await window[instanceName]('configure', webSDKConfig);
     isAlloyConfigured = true;
     pendingAlloyCommands.forEach((fn) => fn());
-    pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent.apply(null, args));
+    pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent(...args));
   } catch (err) {
     handleRejectedPromise(new Error(err));
   }
@@ -191,42 +233,6 @@ export function pushEventToDataLayer(event, xdm, data, configOverrides) {
 }
 
 /**
- * Just a proxy method for the `alloy('sendEvent', …)` method
- * @param {Object} payload the payload to send
- * @returns {Promise<*>} a promise that the event was sent
- */
-export async function sendEvent(payload) {
-  // eslint-disable-next-line no-console
-  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendEvent` method is called');
-  return window[config.alloyInstanceName]('sendEvent', payload);
-}
-
-/**
- * Sends an analytics event to alloy
- * @param {Object} xdmData the xdm data object to send
- * @param {Object} [dataMapping] additional data mapping for the event
- * @param {Object} [configOverrides] optional config overrides
- * @returns {Promise<*>} a promise that the event was sent
- */
-export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverrides = {}) {
-  // eslint-disable-next-line no-console
-  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendAnalyticsEvent` method is called');
-  // eslint-disable-next-line no-console
-  console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
-  try {
-    return sendEvent({
-      documentUnloading: true,
-      xdm: xdmData,
-      data: dataMapping,
-      edgeConfigOverrides: configOverrides,
-    });
-  } catch (err) {
-    handleRejectedPromise(new Error(err));
-    return Promise.reject(new Error(err));
-  }
-}
-
-/**
  * Loads the ACDL library.
  * @returns the ACDL instance
  */
@@ -239,18 +245,24 @@ async function loadAndConfigureDataLayer() {
       });
     }
     window[config.dataLayerInstanceName].push((dl) => {
-      dl.addEventListener('adobeDataLayer:event', (event) => {
-        const eventType = event.event;
-        delete event.event;
+      dl.addEventListener('adobeDataLayer:event', (payload) => {
+        const eventType = payload.event;
+        delete payload.event;
         const args = [
-          { eventType, ...event.xdm },
-          event.data,
-          event.configOverrides,
+          { eventType, ...payload.xdm },
+          payload.data,
+          payload.configOverrides,
         ];
+
+        // Check whether the event should be processed or not
+        if (!config.shouldProcessEvent(payload)) {
+          return;
+        }
+
         if (!isAlloyConfigured) {
           pendingDatalayerEvents.push(args);
         } else {
-          sendAnalyticsEvent.apply(null, args);
+          sendAnalyticsEvent(...args);
         }
       });
     });
