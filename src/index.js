@@ -451,10 +451,14 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
       // Let project override the data if needed
       if (webSDKConfig?.onBeforeEventSend) {
         try {
-          webSDKConfig?.onBeforeEventSend(payload);
+          const shouldSend = webSDKConfig?.onBeforeEventSend(payload);
+          if (shouldSend === false) {
+            return false;
+          }
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error('Error in "onBeforeEventSend" handler:', err);
+          return false;
         }
       }
       if (!Object.keys(payload.data.__adobe.target).length) {
@@ -469,6 +473,7 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
       if (!Object.keys(payload.data).length) {
         delete payload.data;
       }
+      return true;
     },
   };
   if (config.personalization) {
