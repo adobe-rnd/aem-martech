@@ -17,6 +17,8 @@ It's key differentiator are:
 - 🌍 Experience Platform enabled: the library fully integrates with our main Adobe Experience Platform and all the services of our ecosystem
 - 🚀 extremely fast: the library is optimized to reduce load delay, TBT and CLS, and has minimal impact on your Core Web Vitals
 - 👤 privacy-first: the library does not track end users by default, and can easily be integrated with your preferred consent management system to open up more advanced use cases
+- 🔄 speculative prerendering aware: the library intelligently handles speculative prerendering and only sends analytics events when the page is actually viewed by users, preventing unnecessary costs
+
 
 ## Prerequisites
 

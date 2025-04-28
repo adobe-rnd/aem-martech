@@ -47,6 +47,21 @@ const pendingAlloyCommands = [];
 const pendingDatalayerEvents = [];
 
 /**
+ * Triggers the callback when the page is actually activated,
+ * This is to properly handle speculative page prerendering and marketing events.
+ * @param {Function} cb The callback to run
+ */
+async function onPageActivation(cb) {
+  // Speculative prerender-aware execution.
+  // See: https://developer.mozilla.org/en-US/docs/Web/API/Speculation_Rules_API#unsafe_prerendering
+  if (document.prerendering) {
+    document.addEventListener('prerenderingchange', cb, { once: true });
+  } else {
+    cb();
+  }
+}
+
+/**
  * Runs a promise with a timeout that rejects it if the time has passed.
  * @param {Promise} promise The base promise to use
  * @param {Number} [timeout=1000] The timeout to use in ms
@@ -173,8 +188,10 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
   try {
     await window[instanceName]('configure', webSDKConfig);
     isAlloyConfigured = true;
-    pendingAlloyCommands.forEach((fn) => fn());
-    pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent(...args));
+    onPageActivation(() => {
+      pendingAlloyCommands.forEach((fn) => fn());
+      pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent(...args));
+    });
   } catch (err) {
     handleRejectedPromise(new Error(err));
   }
