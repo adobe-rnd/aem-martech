@@ -188,10 +188,8 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
   try {
     await window[instanceName]('configure', webSDKConfig);
     isAlloyConfigured = true;
-    onPageActivation(() => {
-      pendingAlloyCommands.forEach((fn) => fn());
-      pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent(...args));
-    });
+    pendingAlloyCommands.forEach((fn) => fn());
+    pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent(...args));
   } catch (err) {
     handleRejectedPromise(new Error(err));
   }
@@ -580,16 +578,18 @@ export async function martechEager() {
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
     ).then(() => {
-      // Automatically report displayed propositions
-      sendAnalyticsEvent({
-        eventType: 'web.webpagedetails.pageViews',
-        _experience: {
-          decisioning: {
-            propositions: response.propositions
-              .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
-            propositionEventType: { display: 1 },
+      onPageActivation(() => {
+        // Automatically report displayed propositions
+        sendAnalyticsEvent({
+          eventType: 'web.webpagedetails.pageViews',
+          _experience: {
+            decisioning: {
+              propositions: response.propositions
+                .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
+              propositionEventType: { display: 1 },
+            },
           },
-        },
+        });
       });
     }).catch(() => {
       if (alloyConfig.debugEnabled) {
@@ -615,13 +615,17 @@ export async function martechLazy() {
 
   if (!config.personalization && config.performanceOptimized) {
     await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
-    sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
+    onPageActivation(() => {
+      sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
+    });
   } else if (!config.performanceOptimized) {
     const renderDecisionResponse = await sendEvent({ renderDecisions: true, decisionScopes: ['__view__'] });
     response = renderDecisionResponse;
     document.body.style.visibility = null;
     // Automatically report displayed propositions
-    sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
+    onPageActivation(() => {
+      sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
+    });
   }
 }
 
