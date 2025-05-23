@@ -23,7 +23,7 @@ It's key differentiator are:
 ## Prerequisites
 
 You need to have access to:
-- Adobe Experience Platform (AEP)
+- Adobe Experience Platform (no full license needed, just basic permissions for data collection)
 - Adobe Analytics
 - Adobe Target or Adobe Journey Optimizer
 
