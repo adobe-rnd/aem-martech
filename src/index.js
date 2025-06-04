@@ -262,7 +262,6 @@ async function loadAndConfigureDataLayer() {
     window[config.dataLayerInstanceName].push((dl) => {
       dl.addEventListener('adobeDataLayer:event', (payload) => {
         const eventType = payload.event;
-        delete payload.event;
         const args = [
           { eventType, ...payload.xdm },
           payload.data,
@@ -273,6 +272,8 @@ async function loadAndConfigureDataLayer() {
         if (!config.shouldProcessEvent(payload)) {
           return;
         }
+
+        delete payload.event;
 
         if (!isAlloyConfigured) {
           pendingDatalayerEvents.push(args);
