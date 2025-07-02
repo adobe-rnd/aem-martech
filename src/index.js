@@ -72,7 +72,10 @@ function promiseWithTimeout(promise, timeout = 1000) {
   return Promise.race([
     promise,
     new Promise((_, reject) => { timer = setTimeout(reject, timeout); }),
-  ]).finally(() => clearTimeout(timer));
+  ]).finally((result) => {
+    clearTimeout(timer);
+    return result;
+  });
 }
 
 /**
@@ -578,7 +581,7 @@ export async function martechEager() {
     return promiseWithTimeout(
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
-    ).then(() => {
+    ).then((result) => {
       onPageActivation(() => {
         // Automatically report displayed propositions
         sendAnalyticsEvent({
@@ -592,6 +595,7 @@ export async function martechEager() {
           },
         });
       });
+      return result;
     }).catch(() => {
       if (alloyConfig.debugEnabled) {
         // eslint-disable-next-line no-console
