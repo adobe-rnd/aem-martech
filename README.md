@@ -155,6 +155,23 @@ To properly connect and configure the plugin for your project, you'll need to ed
       …
       if (main) {
         decorateMain(main);
+        document.body.classList.add('appear');
+        await Promise.all([
+          martechLoadedPromise.then(martechEager),
+          loadSection(main.querySelector('.section'), waitForFirstImage),
+        ]);
+      }
+    }
+    ```
+    or for older setups:
+    ```js
+    /**
+     * loads everything needed to get to LCP.
+    */
+    async function loadEager(doc) {
+      …
+      if (main) {
+        decorateMain(main);
         await Promise.all([
           martechLoadedPromise.then(martechEager),
           waitForLCP(LCP_BLOCKS),
@@ -283,6 +300,26 @@ For those cases, we typically recommend:
     await getPersonalizationForView('my-view');
     ```
     We recommend directly including this in the `loadEager` logic so the default view immediately get the Target propositions:
+    ```js
+    /**
+     * loads everything needed to get to LCP.
+    */
+    async function loadEager(doc) {
+      …
+      if (main) {
+        decorateMain(main);
+        document.body.classList.add('appear');
+        await Promise.all([
+          martechLoadedPromise.then(martechEager),
+          loadSection(main.querySelector('.section'), waitForFirstImage),
+        ]);
+        if (isPersonalizationEnabled()) {
+          getPersonalizationForView('my-view');
+        }
+      }
+    }
+    ```
+    or for older setups:
     ```js
     /**
      * loads everything needed to get to LCP.
