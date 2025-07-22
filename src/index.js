@@ -577,7 +577,7 @@ export async function applyPersonalization(viewName) {
 export async function martechEager() {
   if (config.personalization && config.performanceOptimized) {
     // eslint-disable-next-line no-console
-    console.assert(window.alloy, 'Martech needs to be initialized before the `martechEager` method is called');
+    console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `martechEager` method is called');
     return promiseWithTimeout(
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
@@ -640,7 +640,7 @@ export async function martechLazy() {
  */
 export async function martechDelayed() {
   // eslint-disable-next-line no-console
-  console.assert(window.alloy, 'Martech needs to be initialized before the `martechDelayed` method is called');
+  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `martechDelayed` method is called');
 
   const { launchUrls } = config;
   return Promise.all(launchUrls.map((url) => import(url)))
