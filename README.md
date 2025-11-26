@@ -93,9 +93,9 @@ This plugin handles the initialization of these components directly to optimize 
 
 - **DO** ensure you have the `Adobe Client Data Layer` extension configured.
 
-:warning: **Legal Disclaimer:** This library defaults user consent to `pending` to comply with privacy regulations. Overriding this behavior to grant consent by default (e.g., setting it to `in`) without explicit user agreement may have significant legal implications under regulations like GDPR and CCPA. We strongly advise consulting with your legal team before altering the default consent handling.
+:warning: **Legal Disclaimer:** This library defaults user consent to `pending`. Setting user consent to `in` overrides this behavior to grant consent by default (i.e. without explicit end user agreement). Customers should consult with their own legal counsel to understand their privacy obligations and the appropriate use and configuration of this library.
 
-We also recommend using a proper consent management system.
+We also recommend using a consent management system.
 
 ## Installation
 
