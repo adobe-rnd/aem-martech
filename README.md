@@ -32,6 +32,7 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
   - [Consent Management](#consent-management)
       - [Integrating with AEM Consent Banner Block](#integrating-with-aem-consent-banner-block)
       - [Integrating with OneTrust](#integrating-with-onetrust)
+      - [Integrating with Cookiebot](#integrating-with-cookiebot)
   - [Working with Dynamic Content (SPAs)](#working-with-dynamic-content-spas)
   - [FAQ](#faq)
     - [Why not use the default Adobe Launch approach?](#why-not-use-the-default-adobe-launch-approach)
@@ -330,6 +331,30 @@ function consentEventHandler(ev) {
  updateUserConsent({ collect, personalize, share });
 }
 window.addEventListener('consent.onetrust', consentEventHandler);
+```
+
+#### Integrating with Cookiebot
+Example for [Cookiebot](https://www.cookiebot.com):
+```js
+function setupCookiebotConsent() {
+  function handleCookiebotConsent() {
+    const preferences = window.Cookiebot?.consent?.preferences || false;
+    const statistics = window.Cookiebot?.consent?.statistics || false;
+    const marketing = window.Cookiebot?.consent?.marketing || false;
+    
+    updateUserConsent({
+      collect: statistics,        // Statistics cookies
+      marketing: marketing,       // Marketing cookies
+      personalize: preferences,   // Preference cookies
+      share: marketing           // Marketing cookies
+    });
+  }
+
+  window.addEventListener('CookiebotOnConsentReady', handleCookiebotConsent);
+  window.addEventListener('CookiebotOnAccept', handleCookiebotConsent);
+}
+
+setupCookiebotConsent();
 ```
 
 ## Working with Dynamic Content (SPAs)
