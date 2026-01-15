@@ -66,6 +66,7 @@ The AEM MarTech plugin is essentially a wrapper around the Adobe Experience Plat
 - 🚩 Adobe Experience Platform Tags (a.k.a. Launch): to track your custom events
 
 Its key differentiators are:
+
 - 🌍 **Experience Platform enabled**: The library fully integrates with our main Adobe Experience Platform and all the services of our ecosystem.
 - 🚀 **Extremely fast**: The library is optimized to reduce load delay, TBT, and CLS, and has a minimal impact on your Core Web Vitals.
 - 👤 **Privacy-first**: The library does not track end-users by default and can be easily integrated with your preferred consent management system.
@@ -74,26 +75,28 @@ Its key differentiators are:
 ## Prerequisites
 
 You need access to:
+
 - **Adobe Experience Platform** (no full license needed, just basic permissions for data collection)
 - **Adobe Analytics**
 - **Adobe Target** or **Adobe Journey Optimizer**
 
 ### Launch Container Configuration
 
-:warning: **CRITICAL SETUP STEP**
+Before instrumenting your project, you must configure your Adobe Experience Platform Tags (Launch) container to use the alloy instance created by this plugin.
 
-Before instrumenting your project, you must configure your Adobe Experience Platform Tags (Launch) container correctly for use with this plugin.
+1. Open your Launch property and navigate to **Extensions**
+2. Install or configure the **Adobe Experience Platform Web SDK** extension
+3. Under **Build Options**, select **"Use a self-hosted alloy.js instance"**
+4. Set the **Instance name** to `alloy`
+5. Save and publish your changes
 
-- **DO NOT** include the following extensions in your Launch container:
-    - `Adobe Experience Platform Web SDK`
-    - `Adobe Analytics`
-    - `Adobe Target`
+This configuration tells the extension to hook into the alloy instance created by this plugin rather than loading its own copy. You can then use Launch data elements and rules to extend your implementation.
 
-This plugin handles the initialization of these components directly to optimize performance. Including them in Launch will lead to conflicts and potential data duplication.
+> See [Custom build options and components](https://experienceleague.adobe.com/en/docs/experience-platform/tags/extensions/client/web-sdk/configure/custom-build-components) for more details.
 
-- **DO** ensure you have the `Adobe Client Data Layer` extension configured.
+Also ensure you have the `Adobe Client Data Layer` extension configured.
 
-:warning: **Legal Disclaimer:** This library defaults user consent to `pending`. Setting user consent to `in` overrides this behavior to grant consent by default (i.e. without explicit end user agreement). Customers should consult with their own legal counsel to understand their privacy obligations and the appropriate use and configuration of this library.
+⚠️ **Legal Disclaimer:** This library defaults user consent to `pending`. Setting user consent to `in` overrides this behavior to grant consent by default (i.e. without explicit end user agreement). Customers should consult with their own legal counsel to understand their privacy obligations and the appropriate use and configuration of this library.
 
 We also recommend using a consent management system.
 
@@ -102,11 +105,13 @@ We also recommend using a consent management system.
 We have a comprehensive [tutorial on Experience League](https://experienceleague.adobe.com/en/docs/platform-learn/tutorial-one-adobe/assetmgmt/assetm1/ex6), or you can just follow the steps below.
 
 Add the plugin to your AEM project by running:
+
 ```sh
 git subtree add --squash --prefix plugins/martech git@github.com:adobe-rnd/aem-martech.git main
 ```
 
 If you later want to pull the latest changes and update your local copy of the plugin:
+
 ```sh
 git subtree pull --squash --prefix plugins/martech git@github.com:adobe-rnd/aem-martech.git main
 ```
@@ -114,6 +119,7 @@ git subtree pull --squash --prefix plugins/martech git@github.com:adobe-rnd/aem-
 If the `subtree pull` command fails, you can delete the `plugins/martech` folder and re-add it using the `git subtree add` command.
 
 If you use a linter, make sure to ignore minified files in your `.eslintignore`:
+
 ```
 *.min.js
 ```
@@ -125,6 +131,7 @@ To connect and configure the plugin, you'll need to edit your project's `head.ht
 ### 1. Add Preload Hints
 
 Add the following lines at the end of your `head.html` to speed up page load:
+
 ```html
 <link rel="preload" as="script" crossorigin="anonymous" href="/plugins/martech/src/index.js"/>
 <link rel="preload" as="script" crossorigin="anonymous" href="/plugins/martech/src/alloy.min.js"/>
@@ -135,7 +142,8 @@ Add the following lines at the end of your `head.html` to speed up page load:
 ### 2. Import Plugin Methods
 
 Import the necessary methods at the top of your `scripts.js` file:
-```js
+
+```javascript
 import {
   initMartech,
   updateUserConsent,
@@ -149,7 +157,7 @@ import {
 
 Call `initMartech` at the top of the `loadEager` method in your `scripts.js`. This function takes two arguments: the WebSDK configuration and the library-specific configuration.
 
-```js
+```javascript
 /**
  * Loads everything needed to get to LCP.
  */
@@ -188,7 +196,7 @@ async function loadEager(doc) {
 
 Adjust your `loadEager` method to wait for the MarTech promise to resolve before rendering the main content. This prevents content flicker from personalized content.
 
-```js
+```javascript
 // ... inside loadEager
 if (main) {
   decorateMain(main);
@@ -203,7 +211,8 @@ if (main) {
 ### 5. Load Lazy Logic
 
 Add a reference to `martechLazy` just after the `loadFooter(…);` call in your `loadLazy` method:
-```js
+
+```javascript
 async function loadLazy(doc) {
   // ...
   loadFooter(doc.querySelector('footer'));
@@ -215,7 +224,8 @@ async function loadLazy(doc) {
 ### 6. Load Delayed Logic
 
 Add a reference to `martechDelayed` in your `loadDelayed` method:
-```js
+
+```javascript
 function loadDelayed() {
   window.setTimeout(() => {
     martechDelayed();
@@ -231,6 +241,7 @@ The plugin exports several functions to interact with the marketing stack.
 ---
 
 ### `initMartech(webSDKConfig, martechConfig)`
+
 Initializes the library. This should be called once in `loadEager`.
 
 - **`webSDKConfig`** `{Object}`: Configuration for the Adobe Experience Platform WebSDK. Requires `datastreamId` and `orgId`.
@@ -249,6 +260,7 @@ Initializes the library. This should be called once in `loadEager`.
 ---
 
 ### `updateUserConsent(consent)`
+
 Sets user consent based on the IAB TCF 2.0 standard.
 
 - **`consent`** `{Object}`: An object detailing user consent choices (`collect`, `marketing`, `personalize`, `share`).
@@ -256,6 +268,7 @@ Sets user consent based on the IAB TCF 2.0 standard.
 ---
 
 ### `pushToDataLayer(payload)`
+
 Pushes a generic payload to the Adobe Client Data Layer.
 
 - **`payload`** `{Object}`: The data object to push.
@@ -263,6 +276,7 @@ Pushes a generic payload to the Adobe Client Data Layer.
 ---
 
 ### `pushEventToDataLayer(event, xdm, data, configOverrides)`
+
 A helper for pushing a standardized event to the data layer.
 
 - **`event`** `{String}`: The name of the event.
@@ -273,6 +287,7 @@ A helper for pushing a standardized event to the data layer.
 ---
 
 ### `sendEvent(payload)`
+
 A proxy for the `alloy('sendEvent', ...)` command to send a raw event.
 
 - **`payload`** `{Object}`: The full event payload for the WebSDK.
@@ -280,6 +295,7 @@ A proxy for the `alloy('sendEvent', ...)` command to send a raw event.
 ---
 
 ### `sendAnalyticsEvent(xdmData, dataMapping, configOverrides)`
+
 A helper for sending an analytics event directly.
 
 - **`xdmData`** `{Object}`: The XDM data object.
@@ -289,6 +305,7 @@ A helper for sending an analytics event directly.
 ---
 
 ### `initRumTracking(sampleRUM, options)`
+
 Initializes RUM (Real User Monitoring) tracking.
 
 - **`sampleRUM`** `{Object}`: The RUM sampling object.
@@ -297,6 +314,7 @@ Initializes RUM (Real User Monitoring) tracking.
 ---
 
 ### `isPersonalizationEnabled()`
+
 - **Returns** `{Boolean}`: `true` if personalization is configured and enabled.
 
 ---
@@ -306,8 +324,10 @@ Initializes RUM (Real User Monitoring) tracking.
 Connect your consent management system (CMS) to track user consent. Call `updateUserConsent` when your CMS sends a consent event.
 
 #### Integrating with AEM Consent Banner Block
+
 Example for the [AEM Consent Banner Block](https://github.com/adobe/aem-block-collection/pull/50):
-```js
+
+```javascript
 function consentEventHandler(ev) {
   const collect = ev.detail.categories.includes('CC_ANALYTICS');
   const marketing = ev.detail.categories.includes('CC_MARKETING');
@@ -320,8 +340,10 @@ window.addEventListener('consent-updated', consentEventHandler);
 ```
 
 #### Integrating with OneTrust
+
 Example for [OneTrust](https://www.onetrust.com):
-```js
+
+```javascript
 function consentEventHandler(ev) {
  const groups = ev.detail;
  const collect = groups.includes('C0002'); // Performance Cookies
@@ -336,80 +358,91 @@ window.addEventListener('consent.onetrust', consentEventHandler);
 
 For Single Page Applications or pages with dynamic content, you may need to manage personalization manually to avoid concurrency issues.
 
-1.  **Follow the SPA approach** and define [views in Adobe Target](https://experienceleague.adobe.com/en/docs/target/using/experiences/spa-visual-experience-composer).
-2.  **Import the helper methods** in your components:
-    ```js
-    import {
-      isPersonalizationEnabled,
-      getPersonalizationForView,
-      applyPersonalization,
-    } from '../plugins/martech/src/index.js';
-    ```
-3.  **Fetch the personalization** for the view when it renders:
-    ```js
-    if (isPersonalizationEnabled()) {
-      await getPersonalizationForView('my-view-name');
-    }
-    ```
-4.  **Apply the personalization** every time there is a significant DOM update:
-    ```js
-    applyPersonalization('my-view-name');
-    ```
+1. **Follow the SPA approach** and define [views in Adobe Target](https://experienceleague.adobe.com/en/docs/target/using/experiences/spa-visual-experience-composer).
+2. **Import the helper methods** in your components:
+
+   ```javascript
+   import {
+     isPersonalizationEnabled,
+     getPersonalizationForView,
+     applyPersonalization,
+   } from '../plugins/martech/src/index.js';
+   ```
+3. **Fetch the personalization** for the view when it renders:
+
+   ```javascript
+   if (isPersonalizationEnabled()) {
+     await getPersonalizationForView('my-view-name');
+   }
+   ```
+4. **Apply the personalization** every time there is a significant DOM update:
+
+   ```javascript
+   applyPersonalization('my-view-name');
+   ```
 
 ## FAQ
 
 ### Why not use the default Adobe Launch approach?
+
 A default Launch implementation can negatively impact Core Web Vitals. Our approach optimizes for performance by loading components intelligently.
 
 ### Can't I just defer the Launch script?
+
 Deferring the entire script introduces content flickering for personalization use cases and can lead to missed analytics events from users who bounce early.
 
 ### Why is `git subtree` used for installation?
+
 `git subtree` is used to vendor the plugin's code directly into your project. This approach avoids the need for a package manager like `npm` and the complexities of `git submodule`, providing a simple way to pull in updates while keeping the code self-contained within your repository.
 
 ### What guarantees do I have that this won't break?
+
 This library uses the same official Adobe Experience Platform WebSDK and Adobe Client Data Layer as Launch. We are building on documented Adobe APIs, such as [top and bottom of page events](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/use-cases/top-bottom-page-events), to ensure compatibility.
 
 ### What's the catch?
-Since some logic is moved from the Launch UI into your project's code, not all features can be managed from the Launch UI. We recommend a baseline of the Core, ACDL, and AA via AEP Web SDK extensions in your Launch container.
+
+Since the SDK initialization and configuration is managed by this plugin rather than Launch, those settings live in your project's code instead of the Launch UI. However, by configuring the Web SDK extension to use the self-hosted instance, you retain full access to Launch data elements, rules, and event types to extend your implementation.
 
 ## Dependencies
 
 This plugin includes the following core libraries:
+
 - **Adobe Experience Platform WebSDK**: `v2.28.0` (`alloy.min.js`)
 - **Adobe Client Data Layer**: `v2.0.2` (`acdl.min.js`)
 
 ## Web SDK Configuration
 
-This project manages the on-page, self-hosted implementation of the Adobe Experience Platform Web SDK (`alloy.js`). When used with the **AEP Web SDK** extension in Adobe Launch, you must enable a specific setting to avoid conflicts and ensure optimal performance.
+This project manages the on-page, self-hosted implementation of the Adobe Experience Platform Web SDK (`alloy.js`).
 
 ### Integration with Adobe Launch
 
-When using this project's self-hosted Adobe Experience Platform Web SDK implementation with Adobe Launch, the standard **AEP Web SDK** extension must be **removed** from your Launch property to avoid conflicts.
-To enable Launch Rules that depend on Web SDK events (such as "Send Event Complete"), you have two options:
+When using this project with Adobe Launch, configure the **AEP Web SDK** extension to use the existing alloy instance created by this plugin:
 
-#### Option 1: Use Direct Call Rules
-Configure your Launch Rules to use Direct Call Rules instead of Web SDK event triggers, and invoke them using custom code snippets within your Launch property.
+1. Open your Launch property and navigate to **Extensions**
+2. Configure the **Adobe Experience Platform Web SDK** extension
+3. Under **Build Options**, select **"Use a self-hosted alloy.js instance"**
+4. Set the **Instance name** to `alloy`
+5. Save and publish your changes
 
-#### Option 2: Use the "AA via AEP Web SDK" Community Extension
-Install the "AA via AEP Web SDK" community extension in Launch. This extension creates mock Web SDK events that your existing Rules can reference, allowing them to function without the official AEP Web SDK extension installed.
+With this configuration:
 
-With either approach:
+- The Launch library will not bundle a second copy of alloy.js
+- The Launch library will not attempt to re-configure the SDK
+- You can use Launch data elements and rules that reference the Web SDK
+- Web SDK event types (like "Send Event Complete") work normally in your rules
 
-1. The Launch library will not bundle a second copy of alloy.js.
-2. The Launch library will not attempt to re-configure the SDK.
-3. All SDK configuration (Datastream ID, Org ID, Default Consent, etc.) must be managed through this project's code as shown in the Configuration Reference section below.
+All SDK configuration (Datastream ID, Org ID, Default Consent, etc.) is managed through this project's code as shown in the Configuration Reference section below.
 
 ### Configuration Reference
 
 All configuration is set within the `alloy("configure", { ... })` command. For a complete and official reference of all available options, please see the Adobe Experience League documentation, which is the source of truth.
 
-*   **Primary Documentation: [Configuring the Web SDK](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/index.html)**
+- **Primary Documentation: [Configuring the Web SDK](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/index.html)**
 
-The table below summarizes the most common settings that are now managed here instead of in the Launch UI, with direct links to their respective documentation pages.
+The table below summarizes the most common settings that are managed here instead of in the Launch UI, with direct links to their respective documentation pages.
 
 | Option | Description | Example Value |
-| :--- | :--- | :--- |
+| --- | --- | --- |
 | [`datastreamId`](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/datastreamid) | The ID of the datastream to send data to. | `'YOUR_DATASTREAM_ID'` |
 | [`orgId`](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/orgid) | Your Experience Cloud Organization ID. | `'YOUR_ORG_ID@AdobeOrg'` |
 | [`edgeDomain`](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/commands/configure/edgedomain) | The first-party domain (CNAME) for interacting with Adobe services. | `'edge.your-domain.com'` |
@@ -442,4 +475,4 @@ alloy("configure", {
     options.xdm.customContext = "some value";
   }
 });
-``` 
+```
