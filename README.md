@@ -99,7 +99,7 @@ We also recommend using a consent management system.
 
 ## Installation
 
-We have a comprehensive [tutorial on Experience League](https://experienceleague.adobe.com/en/docs/platform-learn/tutorial-one-adobe/assetmgmt/assetm1/ex6), or you can just follow the steps below.
+We have a comprehensive [tutorial on Experience League](https://experienceleague.adobe.com/en/docs/platform-learn/tutorial-one-adobe/assetmgmt/assetm1/ex5), or you can just follow the steps below.
 
 Add the plugin to your AEM project by running:
 ```sh
