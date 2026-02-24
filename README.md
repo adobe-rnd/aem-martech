@@ -55,7 +55,7 @@ This is achieved through a phased approach that aligns with modern web performan
 - **Lazy Phase**: Loads analytics and the data layer after the main content has rendered, capturing metrics without delaying the Largest Contentful Paint (LCP).
 - **Delayed Phase**: Executes non-essential scripts, like third-party tags via Launch, after the page is fully interactive.
 
-By instrumenting the core Adobe libraries directly but in a controlled sequence, this plugin minimizes performance impact while retaining the full power of the Adobe Experience Cloud.
+By instrumenting the core Adobe libraries directly but in a controlled sequence, this plugin minimizes performance impact while retaining the full power of the Adobe Experience Cloud. The AEP Web SDK extension in Launch ([v2.34.0+](https://github.com/adobe/reactor-extension-alloy/releases/tag/v2.34.0)) natively supports this self-hosted approach, so you can extend your implementation with Launch rules, data elements, and event types as usual.
 
 ## Features
 
@@ -80,18 +80,25 @@ You need access to:
 
 ### Launch Container Configuration
 
-:warning: **CRITICAL SETUP STEP**
+Before instrumenting your project, you must configure your Adobe Experience Platform Tags (Launch) container to use the alloy instance created by this plugin.
 
-Before instrumenting your project, you must configure your Adobe Experience Platform Tags (Launch) container correctly for use with this plugin.
+1. Open your Launch property and navigate to **Extensions**
+2. Install or configure the **Adobe Experience Platform Web SDK** extension (v2.34.0+)
+3. Under **Build Options**, select **"Use a self-hosted alloy.js instance"**
+4. Set the **Instance name** to `alloy`
+5. Save and publish your changes
 
-- **DO NOT** include the following extensions in your Launch container:
-    - `Adobe Experience Platform Web SDK`
-    - `Adobe Analytics`
-    - `Adobe Target`
+This tells the extension to hook into the alloy instance managed by this plugin rather than bundling and configuring its own copy. You can then use Launch data elements, rules, and Web SDK event types (like "Send Event Complete") to extend your implementation.
 
-This plugin handles the initialization of these components directly to optimize performance. Including them in Launch will lead to conflicts and potential data duplication.
+> Requires **v2.34.0 or later** of the AEP Web SDK extension. See [Custom build options and components](https://experienceleague.adobe.com/en/docs/experience-platform/tags/extensions/client/web-sdk/configure/custom-build-components) for more details.
 
-- **DO** ensure you have the `Adobe Client Data Layer` extension configured.
+Also ensure you have the `Adobe Client Data Layer` extension configured.
+
+<details>
+<summary>Using an older version of the Web SDK extension (prior to v2.34.0)?</summary>
+
+If you cannot upgrade to v2.34.0+, you must **remove** the AEP Web SDK extension from your Launch property to avoid conflicts. To keep Launch rules that depend on Web SDK events, you can either use Direct Call Rules or install the "AA via AEP Web SDK" community extension as a bridge. Upgrading to v2.34.0+ is strongly recommended.
+</details>
 
 :warning: **Legal Disclaimer:** This library defaults user consent to `pending`. Setting user consent to `in` overrides this behavior to grant consent by default (i.e. without explicit end user agreement). Customers should consult with their own legal counsel to understand their privacy obligations and the appropriate use and configuration of this library.
 
@@ -371,7 +378,7 @@ Deferring the entire script introduces content flickering for personalization us
 This library uses the same official Adobe Experience Platform WebSDK and Adobe Client Data Layer as Launch. We are building on documented Adobe APIs, such as [top and bottom of page events](https://experienceleague.adobe.com/en/docs/experience-platform/web-sdk/use-cases/top-bottom-page-events), to ensure compatibility.
 
 ### What's the catch?
-Since some logic is moved from the Launch UI into your project's code, not all features can be managed from the Launch UI. We recommend a baseline of the Core, ACDL, and AA via AEP Web SDK extensions in your Launch container.
+SDK initialization and configuration live in your project's code rather than the Launch UI. This is by design — it's what enables the phased loading that keeps your Core Web Vitals fast. With the AEP Web SDK extension (v2.34.0+) configured to use the self-hosted instance, you retain full access to Launch data elements, rules, and event types to extend your implementation.
 
 ## Dependencies
 
@@ -381,24 +388,18 @@ This plugin includes the following core libraries:
 
 ## Web SDK Configuration
 
-This project manages the on-page, self-hosted implementation of the Adobe Experience Platform Web SDK (`alloy.js`). When used with the **AEP Web SDK** extension in Adobe Launch, you must enable a specific setting to avoid conflicts and ensure optimal performance.
+This project manages the on-page, self-hosted implementation of the Adobe Experience Platform Web SDK (`alloy.js`).
 
 ### Integration with Adobe Launch
 
-When using this project's self-hosted Adobe Experience Platform Web SDK implementation with Adobe Launch, the standard **AEP Web SDK** extension must be **removed** from your Launch property to avoid conflicts.
-To enable Launch Rules that depend on Web SDK events (such as "Send Event Complete"), you have two options:
+As of [v2.34.0](https://github.com/adobe/reactor-extension-alloy/releases/tag/v2.34.0), the AEP Web SDK extension officially supports self-hosted alloy instances. When configured as described in the [Launch Container Configuration](#launch-container-configuration) section above, the extension hooks into the alloy instance created by this plugin. This means:
 
-#### Option 1: Use Direct Call Rules
-Configure your Launch Rules to use Direct Call Rules instead of Web SDK event triggers, and invoke them using custom code snippets within your Launch property.
+- The Launch library will not bundle a second copy of alloy.js
+- The Launch library will not attempt to re-configure the SDK
+- Launch data elements and rules that reference the Web SDK work normally
+- Web SDK event types (like "Send Event Complete") work normally in your rules
 
-#### Option 2: Use the "AA via AEP Web SDK" Community Extension
-Install the "AA via AEP Web SDK" community extension in Launch. This extension creates mock Web SDK events that your existing Rules can reference, allowing them to function without the official AEP Web SDK extension installed.
-
-With either approach:
-
-1. The Launch library will not bundle a second copy of alloy.js.
-2. The Launch library will not attempt to re-configure the SDK.
-3. All SDK configuration (Datastream ID, Org ID, Default Consent, etc.) must be managed through this project's code as shown in the Configuration Reference section below.
+All SDK configuration (Datastream ID, Org ID, Default Consent, etc.) is managed through this project's code as shown in the Configuration Reference section below.
 
 ### Configuration Reference
 
