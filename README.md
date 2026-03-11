@@ -251,6 +251,7 @@ Initializes the library. This should be called once in `loadEager`.
   - `personalization` `{Boolean}`: Enable personalization. Default: `true`.
   - `performanceOptimized` `{Boolean}`: Use aggressive performance optimizations. Default: `true`.
   - `personalizationTimeout` `{Number}`: Timeout in ms for personalization. Default: `1000`.
+  - `trackPageView` `{Boolean}`: Whether to automatically send a page view event on page activation. When `false`, the library sends a `decisioning.propositionDisplay` event instead, so proposition display is still reported to Target without triggering an extra page view. Set to `false` if this is already handled separately in the page. Default: `true`.
   - `shouldProcessEvent` `{Function}`: A function that receives a data layer event payload and returns `false` to prevent it from being sent.
 
 ---

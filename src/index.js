@@ -21,6 +21,13 @@
  * @property {Number} personalizationTimeout Indicates the amount of time to wait before bailing
  *                                           out on the personalization and continue rendering the
  *                                           page (defaults to 1s)
+ * @property {Boolean} trackPageView Whether the library should automatically send a page view
+ *                                   event on page activation. When disabled, a
+ *                                   `decisioning.propositionDisplay` event is sent instead so
+ *                                   proposition display is still reported to Target without
+ *                                   triggering an extra page view. Disable this if a TMS
+ *                                   (e.g. Ensighten) already handles page view tracking.
+ *                                   (defaults to true)
  * @property {Function} shouldProcessEvent Optional function to filter which events are sent to
  *                                         analytics. It gets the datalayer event as a parameter
  *                                         and returns a boolean. Return true to process the event,
@@ -30,6 +37,7 @@
 export const DEFAULT_CONFIG = {
   analytics: true,
   alloyInstanceName: 'alloy',
+  trackPageView: true,
   dataLayer: true,
   dataLayerInstanceName: 'adobeDataLayer',
   includeDataLayerState: true,
@@ -585,7 +593,9 @@ export async function martechEager() {
       onPageActivation(() => {
         // Automatically report displayed propositions
         sendAnalyticsEvent({
-          eventType: 'web.webpagedetails.pageViews',
+          eventType: config.trackPageView
+            ? 'web.webpagedetails.pageViews'
+            : 'decisioning.propositionDisplay',
           _experience: {
             decisioning: {
               propositions: response.propositions
@@ -620,17 +630,21 @@ export async function martechLazy() {
 
   if (!config.personalization && config.performanceOptimized) {
     await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
-    onPageActivation(() => {
-      sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
-    });
+    if (config.trackPageView) {
+      onPageActivation(() => {
+        sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
+      });
+    }
   } else if (!config.performanceOptimized) {
     const renderDecisionResponse = await sendEvent({ renderDecisions: true, decisionScopes: ['__view__'] });
     response = renderDecisionResponse;
     document.body.style.visibility = null;
     // Automatically report displayed propositions
-    onPageActivation(() => {
-      sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
-    });
+    if (config.trackPageView) {
+      onPageActivation(() => {
+        sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
+      });
+    }
   }
 }
 
