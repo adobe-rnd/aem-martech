@@ -32,6 +32,7 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
   - [Consent Management](#consent-management)
       - [Integrating with AEM Consent Banner Block](#integrating-with-aem-consent-banner-block)
       - [Integrating with OneTrust](#integrating-with-onetrust)
+  - [Working with Form-Based Activities](#working-with-form-based-activities)
   - [Working with Dynamic Content (SPAs)](#working-with-dynamic-content-spas)
   - [FAQ](#faq)
     - [Why not use the default Adobe Launch approach?](#why-not-use-the-default-adobe-launch-approach)
@@ -170,7 +171,7 @@ async function loadEager(doc) {
     {
       datastreamId: /* your datastream id here */,
       orgId: /* your IMS org id here */,
-      // The `debugEnabled` flag is automatically set to true on localhost and .page URLs.
+      // The `debugEnabled` flag is automatically set to true on localhost, .page, and .aem.network URLs.
       // The `defaultConsent` is automatically set to "pending".
       onBeforeEventSend: (payload) => {
         // This callback allows you to modify the payload before it's sent.
@@ -187,6 +188,9 @@ async function loadEager(doc) {
       // To request additional decision scopes beyond the default `__view__` scope,
       // list them here. They are added to the eager personalization fetch.
       // decisionScopes: ['my-scope-name'],
+      // For Form-Based HTML offers that don't embed a CSS selector, map the scope to a
+      // target selector here so the plugin knows where to apply the offer.
+      // propositionMetadata: { 'my-scope-name': { selector: 'main h2', actionType: 'replaceHtml' } },
       // See the API Reference for all available options.
     },
   );
@@ -257,6 +261,7 @@ Initializes the library. This should be called once in `loadEager`.
   - `trackPageView` `{Boolean}`: Whether to automatically send a page view event on page activation. When `false`, the library sends a `decisioning.propositionDisplay` event instead, so proposition display is still reported to Target without triggering an extra page view. Set to `false` if this is already handled separately in the page. Default: `true`.
   - `shouldProcessEvent` `{Function}`: A function that receives a data layer event payload and returns `false` to prevent it from being sent.
   - `decisionScopes` `{String[]}`: Additional decision scopes to request beyond the default `__view__` scope. Previously this required mutating the payload via `onBeforeEventSend`; this provides a dedicated config field. The scopes are included in both the eager `propositionFetch` (when `performanceOptimized` is `true`) and the `martechLazy` `sendEvent` (when `performanceOptimized` is `false`), with `__view__` always included. Default: `[]`.
+  - `propositionMetadata` `{Object}`: Selector fallback map for Form-Based HTML offers that do not carry a built-in CSS selector (e.g. raw HTML offers created manually in Target). Keys are decision scope names; values are `{ selector, actionType }` objects where `actionType` is `'setHtml'`, `'replaceHtml'` (default), or `'appendHtml'`. DA "Send to Target" offers embed their own selector and do not need an entry here. The same map also rescues dom-action items that arrive with a non-visual selector (`head`/`body`/`html`). Default: `{}`.
 
 ---
 
@@ -343,6 +348,50 @@ function consentEventHandler(ev) {
 }
 window.addEventListener('consent.onetrust', consentEventHandler);
 ```
+
+## Working with Form-Based Activities
+
+Adobe Target Form-Based activities (offers created in the Target UI rather than the Visual Experience Composer) need two pieces of configuration: the named decision scope(s) to fetch, and — for raw HTML offers that don't carry their own selector — a fallback map telling the plugin where to apply the offer content.
+
+### Step 1 — Request the scope
+
+Add the mbox name(s) to `decisionScopes`:
+
+```js
+initMartech(webSDKConfig, {
+  personalization: true,
+  decisionScopes: ['my-hero-mbox'],
+});
+```
+
+Without this, the Web SDK only fetches `__view__` (VEC) propositions and Form-Based activities at named mboxes are silently ignored.
+
+### Step 2 — Provide a selector fallback (if needed)
+
+Offers sent from **Document Authoring via "Send to Target"** embed their own CSS selector in the offer data — no further configuration is required for those.
+
+For **raw HTML offers** created manually in the Target UI (which have no built-in selector), provide a `propositionMetadata` fallback map:
+
+```js
+initMartech(webSDKConfig, {
+  personalization: true,
+  decisionScopes: ['my-hero-mbox'],
+  propositionMetadata: {
+    'my-hero-mbox': {
+      // CSS selector of the element the offer content targets
+      selector: 'main .hero',
+      // 'setHtml'     — replace the inner HTML of the matched element (preserves the element)
+      // 'replaceHtml' — replace the matched element itself with the offer content (default)
+      // 'appendHtml'  — append the offer content as children of the matched element
+      actionType: 'setHtml',
+    },
+  },
+});
+```
+
+The same `propositionMetadata` field also acts as a **rescue override for misconfigured VEC offers**: if a dom-action item arrives with a non-visual selector (`head`, `body`, or `html`) — which can happen when a DA offer is re-sent without updating its selector — the plugin reroutes it through the matching `propositionMetadata` entry and applies it directly. Items with no override (or whose override selector is itself `head`/`body`/`html`) are dropped with a debug-mode warning to prevent unintended document-chrome mutations.
+
+> **Reporting note:** When the rescue override path is used, the plugin manually fires a `decisioning.propositionDisplay` event so Target Activity reporting still records an impression for the delivered offer.
 
 ## Working with Dynamic Content (SPAs)
 
