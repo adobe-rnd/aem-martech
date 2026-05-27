@@ -184,6 +184,9 @@ async function loadEager(doc) {
     {
       personalization: !!getMetadata('target') && isConsentGiven,
       launchUrls: [/* your Launch script URLs here */],
+      // To request additional decision scopes beyond the default `__view__` scope,
+      // list them here. They are added to the eager personalization fetch.
+      // decisionScopes: ['my-scope-name'],
       // See the API Reference for all available options.
     },
   );
@@ -253,6 +256,7 @@ Initializes the library. This should be called once in `loadEager`.
   - `personalizationTimeout` `{Number}`: Timeout in ms for personalization. Default: `1000`.
   - `trackPageView` `{Boolean}`: Whether to automatically send a page view event on page activation. When `false`, the library sends a `decisioning.propositionDisplay` event instead, so proposition display is still reported to Target without triggering an extra page view. Set to `false` if this is already handled separately in the page. Default: `true`.
   - `shouldProcessEvent` `{Function}`: A function that receives a data layer event payload and returns `false` to prevent it from being sent.
+  - `decisionScopes` `{String[]}`: Additional decision scopes to request beyond the default `__view__` scope. Previously this required mutating the payload via `onBeforeEventSend`; this provides a dedicated config field. The scopes are included in both the eager `propositionFetch` (when `performanceOptimized` is `true`) and the `martechLazy` `sendEvent` (when `performanceOptimized` is `false`), with `__view__` always included. Default: `[]`.
 
 ---
 
