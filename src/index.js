@@ -666,6 +666,13 @@ async function applyPropositions(instanceName) {
     }))
     .filter((p) => p.items.length > 0);
   onDecoratedElement(async () => {
+    const lateScopes = discoverPropositionScopes(document);
+    lateScopes.forEach((scope) => {
+      if (!response?.propositions?.some((p) => p.scope === scope)) {
+        debug('martech', `mbox "${scope}" discovered after eager propositionFetch; not personalized this load`);
+      }
+    });
+
     // Direct injection for dom-action items alloy cannot place (non-visual selector override).
     // Re-queue items whose target hasn't been decorated yet so later mutation ticks can retry,
     // up to DIRECT_INJECT_MAX_ATTEMPTS — past that we assume the selector is wrong and drop it.
