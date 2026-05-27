@@ -46,13 +46,23 @@
  *                                          decision scope names; values are
  *                                          `{ selector, actionType }` objects where actionType
  *                                          is 'setHtml', 'replaceHtml', or 'appendHtml'
- *                                          (defaults to 'replaceHtml'). Offers sent from DA
+ *                                          (defaults to 'setHtml'). Offers sent from DA
  *                                          via "Send to Target" carry their own selector and
  *                                          do not need an entry here. Also acts as a rescue
  *                                          override for dom-action items that arrive with a
  *                                          non-visual selector (head/body/html).
  *                                          Example: `{ 'my-hero-mbox': { selector: 'main h2',
- *                                          actionType: 'replaceHtml' } }`
+ *                                          actionType: 'setHtml' } }`
+ * @property {String|null} propositionScopeAttribute The `data-*` attribute name the plugin
+ *                                          scans for to auto-discover decision scopes from
+ *                                          the DOM. Multiple scopes per element supported
+ *                                          via comma-separated values. Set to `null` to
+ *                                          disable auto-discovery. (defaults to "mbox")
+ * @property {String} discoveredScopeActionType The default `actionType` for auto-discovered
+ *                                          scopes when neither the offer nor the section's
+ *                                          `data-mbox-action` attribute specifies one.
+ *                                          Valid values: 'setHtml', 'replaceHtml',
+ *                                          'appendHtml'. (defaults to "setHtml")
  */
 const SCHEMA_DOM_ACTION = 'https://ns.adobe.com/personalization/dom-action';
 const SCHEMA_HTML_CONTENT_ITEM = 'https://ns.adobe.com/personalization/html-content-item';
@@ -74,6 +84,8 @@ export const DEFAULT_CONFIG = {
   shouldProcessEvent: () => true,
   decisionScopes: [],
   propositionMetadata: {},
+  propositionScopeAttribute: 'mbox',
+  discoveredScopeActionType: 'setHtml',
 };
 
 let config;
