@@ -500,6 +500,63 @@ function applyHtmlAction(target, content, actionType) {
   }
 }
 
+// Marker class added to every element we've already processed. The :not(.martech-mbox-scanned)
+// filter on the discovery selector makes the per-tick re-scan O(new-elements), not O(all-mboxes).
+const SCANNED_MARKER = 'martech-mbox-scanned';
+
+/**
+ * Scans the DOM under `root` for elements carrying the configured proposition-scope
+ * attribute (default `data-mbox`) and registers a synthetic-class selector + actionType
+ * per scope into `config.propositionMetadata` and `config.decisionScopes`. Idempotent —
+ * elements marked with the SCANNED_MARKER class are skipped on subsequent calls.
+ *
+ * @param {Document|Element} root The DOM root to scan.
+ * @returns {String[]} Scope names discovered during this call only (not previously-scanned).
+ */
+// eslint-disable-next-line no-unused-vars
+function discoverPropositionScopes(root) {
+  if (!config.propositionScopeAttribute) return [];
+  const attr = config.propositionScopeAttribute;
+  const selector = `[data-${attr}]:not(.${SCANNED_MARKER})`;
+  const elements = root.querySelectorAll(selector);
+  const newScopes = [];
+  elements.forEach((el) => {
+    const raw = el.getAttribute(`data-${attr}`);
+    if (!raw) {
+      el.classList.add(SCANNED_MARKER);
+      return;
+    }
+    const scopes = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    const elementAction = el.getAttribute(`data-${attr}-action`);
+    const validActions = new Set(['setHtml', 'replaceHtml', 'appendHtml']);
+    let actionType;
+    if (elementAction && validActions.has(elementAction)) {
+      actionType = elementAction;
+    } else {
+      if (elementAction) {
+        debug('martech', `ignoring invalid data-${attr}-action="${elementAction}"; valid values: setHtml, replaceHtml, appendHtml`);
+      }
+      actionType = config.discoveredScopeActionType || 'setHtml';
+    }
+    scopes.forEach((scope) => {
+      const sanitized = scope.replace(/[^a-zA-Z0-9_-]/g, '-');
+      if (sanitized !== scope) {
+        debug('martech', `mbox name "${scope}" sanitized to "${sanitized}" for CSS class`);
+      }
+      el.classList.add(`martech-mbox-${sanitized}`);
+      if (!config.propositionMetadata[scope]) {
+        config.propositionMetadata[scope] = {
+          selector: `.martech-mbox-${sanitized}`,
+          actionType,
+        };
+        newScopes.push(scope);
+      }
+    });
+    el.classList.add(SCANNED_MARKER);
+  });
+  return newScopes;
+}
+
 // Cap retries for direct-inject entries so a typo'd or never-rendering selector can't
 // keep generating querySelector calls for the life of the page.
 const DIRECT_INJECT_MAX_ATTEMPTS = 20;
