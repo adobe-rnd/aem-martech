@@ -60,6 +60,39 @@ const SCHEMA_HTML_CONTENT_ITEM = 'https://ns.adobe.com/personalization/html-cont
 // arrives with one of these, alloy's applyPropositions injects directly into <head>/<body>/<html>.
 const NON_VISUAL_SELECTORS = new Set(['head', 'body', 'html']);
 
+export const DEFAULT_CONFIG = {
+  analytics: true,
+  alloyInstanceName: 'alloy',
+  trackPageView: true,
+  dataLayer: true,
+  dataLayerInstanceName: 'adobeDataLayer',
+  includeDataLayerState: true,
+  launchUrls: [],
+  personalization: true,
+  performanceOptimized: true,
+  personalizationTimeout: 1000,
+  shouldProcessEvent: () => true,
+  decisionScopes: [],
+  propositionMetadata: {},
+};
+
+let config;
+let alloyConfig;
+let isAlloyConfigured = false;
+const pendingAlloyCommands = [];
+const pendingDatalayerEvents = [];
+/** IDs of propositions that have been actually displayed (direct-inject or alloy-applied). */
+const renderedPropositionIds = new Set();
+/** IDs of propositions that have already been reported via a manual sendEvent call. */
+const reportedPropositionIds = new Set();
+
+const debug = (label = 'martech', ...args) => {
+  if (alloyConfig?.debugEnabled) {
+    // eslint-disable-next-line no-console
+    console.debug.call(null, `[${label}]`, ...args);
+  }
+};
+
 /**
  * Decides whether a selector is safe to hand to alloy or to a direct-injection target
  * lookup. Rejects empty/non-string values, document-chrome selectors (head/body/html,
@@ -92,35 +125,6 @@ function isVisualSelector(rawSelector, contextLabel) {
   }
   return true;
 }
-
-export const DEFAULT_CONFIG = {
-  analytics: true,
-  alloyInstanceName: 'alloy',
-  trackPageView: true,
-  dataLayer: true,
-  dataLayerInstanceName: 'adobeDataLayer',
-  includeDataLayerState: true,
-  launchUrls: [],
-  personalization: true,
-  performanceOptimized: true,
-  personalizationTimeout: 1000,
-  shouldProcessEvent: () => true,
-  decisionScopes: [],
-  propositionMetadata: {},
-};
-
-let config;
-let alloyConfig;
-let isAlloyConfigured = false;
-const pendingAlloyCommands = [];
-const pendingDatalayerEvents = [];
-
-const debug = (label = 'martech', ...args) => {
-  if (alloyConfig?.debugEnabled) {
-    // eslint-disable-next-line no-console
-    console.debug.call(null, `[${label}]`, ...args);
-  }
-};
 
 /**
  * Triggers the callback when the page is actually activated,
@@ -495,6 +499,10 @@ const DIRECT_INJECT_MAX_ATTEMPTS = 20;
  */
 function reportPropositionDisplay(instanceName, propositions) {
   if (!propositions.length) return;
+  propositions.forEach((p) => {
+    renderedPropositionIds.add(p.id);
+    reportedPropositionIds.add(p.id);
+  });
   window[instanceName]('sendEvent', {
     xdm: {
       eventType: 'decisioning.propositionDisplay',
@@ -627,6 +635,11 @@ async function applyPropositions(instanceName) {
         propositions = propositions.filter((p) => p.id !== item.id);
       }
     });
+    appliedPropositions.propositions?.forEach((appliedItem) => {
+      if (appliedItem.renderAttempted) {
+        renderedPropositionIds.add(appliedItem.id);
+      }
+    });
   });
   return renderDecisionResponse;
 }
@@ -657,6 +670,8 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     ...martechConfig,
   };
 
+  renderedPropositionIds.clear();
+  reportedPropositionIds.clear();
   initAlloyQueue(config.alloyInstanceName);
   if (config.dataLayer) {
     initDatalayer(config.dataLayerInstanceName);
@@ -794,19 +809,26 @@ export async function martechEager() {
       config.personalizationTimeout,
     ).then((result) => {
       onPageActivation(() => {
-        // Automatically report displayed propositions
+        const toReport = (response?.propositions || []).filter(
+          (p) => renderedPropositionIds.has(p.id) && !reportedPropositionIds.has(p.id),
+        );
+        if (!config.trackPageView && !toReport.length) return;
         sendAnalyticsEvent({
           eventType: config.trackPageView
             ? 'web.webpagedetails.pageViews'
             : 'decisioning.propositionDisplay',
-          _experience: {
-            decisioning: {
-              propositions: response.propositions
-                .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
-              propositionEventType: { display: 1 },
+          ...(toReport.length && {
+            _experience: {
+              decisioning: {
+                propositions: toReport.map((p) => ({
+                  id: p.id, scope: p.scope, scopeDetails: p.scopeDetails,
+                })),
+                propositionEventType: { display: 1 },
+              },
             },
-          },
+          }),
         });
+        toReport.forEach((p) => reportedPropositionIds.add(p.id));
       });
       return result;
     }).catch(() => {
