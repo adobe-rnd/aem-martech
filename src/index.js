@@ -513,7 +513,6 @@ const SCANNED_MARKER = 'martech-mbox-scanned';
  * @param {Document|Element} root The DOM root to scan.
  * @returns {String[]} Scope names discovered during this call only (not previously-scanned).
  */
-// eslint-disable-next-line no-unused-vars
 function discoverPropositionScopes(root) {
   if (!config.propositionScopeAttribute) return [];
   const attr = config.propositionScopeAttribute;
@@ -598,6 +597,14 @@ function reportPropositionDisplay(instanceName, propositions) {
  * @returns a promise that the propositions were retrieved and will be applied as the page renders
  */
 async function applyPropositions(instanceName) {
+  const discoveredScopes = discoverPropositionScopes(document);
+  if (discoveredScopes.length) {
+    debug('martech', `auto-discovered ${discoveredScopes.length} scope(s):`, discoveredScopes);
+    config.decisionScopes = [
+      ...new Set([...(config.decisionScopes || []), ...discoveredScopes]),
+    ];
+  }
+
   // Get the decisions, but don't render them automatically
   // so we can hook up into the AEM EDS page load sequence
   const renderDecisionResponse = await sendEvent({
