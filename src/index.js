@@ -33,6 +33,13 @@
  *                                         and returns a boolean. Return true to process the event,
  *                                         false to ignore it. The default is a function that
  *                                         always returns true.
+ * @property {String[]} [decisionScopes]   Additional decision scopes to request beyond the
+ *                                         default `__view__` scope. The scopes are included
+ *                                         in both the eager `propositionFetch` (performance
+ *                                         path) and the `martechLazy` `sendEvent`
+ *                                         (non-performance path), with `__view__` always
+ *                                         included.
+ *                                         (defaults to [])
  */
 export const DEFAULT_CONFIG = {
   analytics: true,
@@ -46,6 +53,7 @@ export const DEFAULT_CONFIG = {
   performanceOptimized: true,
   personalizationTimeout: 1000,
   shouldProcessEvent: () => true,
+  decisionScopes: [],
 };
 
 let config;
@@ -394,6 +402,7 @@ async function applyPropositions(instanceName) {
     renderDecisions: false,
     personalization: {
       sendDisplayEvent: false,
+      ...(config.decisionScopes?.length && { decisionScopes: config.decisionScopes }),
     },
   });
   response = renderDecisionResponse;
@@ -636,7 +645,10 @@ export async function martechLazy() {
       });
     }
   } else if (!config.performanceOptimized) {
-    const renderDecisionResponse = await sendEvent({ renderDecisions: true, decisionScopes: ['__view__'] });
+    const renderDecisionResponse = await sendEvent({
+      renderDecisions: true,
+      decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
+    });
     response = renderDecisionResponse;
     document.body.style.visibility = null;
     // Automatically report displayed propositions
