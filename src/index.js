@@ -60,6 +60,39 @@ const SCHEMA_HTML_CONTENT_ITEM = 'https://ns.adobe.com/personalization/html-cont
 // arrives with one of these, alloy's applyPropositions injects directly into <head>/<body>/<html>.
 const NON_VISUAL_SELECTORS = new Set(['head', 'body', 'html']);
 
+/**
+ * Decides whether a selector is safe to hand to alloy or to a direct-injection target
+ * lookup. Rejects empty/non-string values, document-chrome selectors (head/body/html,
+ * case- and whitespace-insensitive), and syntactically-invalid CSS. Debug-logs the
+ * reason on every rejection, prefixed with the supplied context label for traceability.
+ *
+ * @param {String} rawSelector The raw selector — from `item.data.selector`, from
+ *                              `config.propositionMetadata[scope].selector`, or from
+ *                              any other untrusted source.
+ * @param {String} contextLabel Free-form short label like `html-content-item scope "foo"`
+ *                              or `dom-action rescue scope "bar"`. Surfaced in debug logs.
+ * @returns {Boolean} true if the selector is non-empty, visual, and parseable; false
+ *                    otherwise.
+ */
+function isVisualSelector(rawSelector, contextLabel) {
+  if (!rawSelector || typeof rawSelector !== 'string') {
+    debug('martech', `dropping ${contextLabel}: selector is empty or non-string`);
+    return false;
+  }
+  const normalized = rawSelector.trim().toLowerCase();
+  if (NON_VISUAL_SELECTORS.has(normalized)) {
+    debug('martech', `dropping ${contextLabel}: non-visual selector "${rawSelector}"`);
+    return false;
+  }
+  try {
+    document.querySelector(rawSelector);
+  } catch (err) {
+    debug('martech', `dropping ${contextLabel}: invalid CSS — "${rawSelector}" (${err.message})`);
+    return false;
+  }
+  return true;
+}
+
 export const DEFAULT_CONFIG = {
   analytics: true,
   alloyInstanceName: 'alloy',
@@ -420,11 +453,15 @@ let response;
  * @returns {{selector: String, actionType: String}|null} null when no selector can be resolved
  */
 function resolveHtmlContentTarget(item, scope) {
-  const selector = item.data?.selector || config.propositionMetadata?.[scope]?.selector;
-  if (!selector) return null;
-  const actionType = item.data?.actionType
+  const embedded = item?.data?.selector;
+  const override = config.propositionMetadata?.[scope]?.selector;
+  const selector = embedded || override;
+  if (!isVisualSelector(selector, `html-content-item scope "${scope}"`)) {
+    return null;
+  }
+  const actionType = item?.data?.actionType
     || config.propositionMetadata?.[scope]?.actionType
-    || 'replaceHtml';
+    || 'setHtml';
   return { selector, actionType };
 }
 
@@ -513,15 +550,14 @@ async function applyPropositions(instanceName) {
     .map((p) => ({
       ...p,
       items: p.items.map((item) => {
+        const rawSelector = item?.data?.selector;
+        const normalizedSelector = typeof rawSelector === 'string'
+          ? rawSelector.trim().toLowerCase()
+          : '';
         if (item.schema === SCHEMA_DOM_ACTION
-          && NON_VISUAL_SELECTORS.has(item.data?.selector)) {
+          && NON_VISUAL_SELECTORS.has(normalizedSelector)) {
           const override = config.propositionMetadata?.[p.scope];
-          if (!override?.selector) {
-            debug('martech', `dropping non-visual dom-action item with no propositionMetadata override for scope "${p.scope}"`);
-            return null;
-          }
-          if (NON_VISUAL_SELECTORS.has(override.selector)) {
-            debug('martech', `ignoring propositionMetadata override for scope "${p.scope}": selector "${override.selector}" is non-visual`);
+          if (!isVisualSelector(override?.selector, `dom-action rescue scope "${p.scope}"`)) {
             return null;
           }
           directInjectQueue.push({
