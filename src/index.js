@@ -543,13 +543,16 @@ function discoverPropositionScopes(root) {
         debug('martech', `mbox name "${scope}" sanitized to "${sanitized}" for CSS class`);
       }
       el.classList.add(`martech-mbox-${sanitized}`);
+      // Consumer-supplied metadata wins on the selector/actionType, but the scope must still be
+      // registered for fetching regardless — otherwise a pre-supplied propositionMetadata entry
+      // without a matching decisionScopes entry would mean the offer is never requested.
       if (!config.propositionMetadata[scope]) {
         config.propositionMetadata[scope] = {
           selector: `.martech-mbox-${sanitized}`,
           actionType,
         };
-        newScopes.push(scope);
       }
+      newScopes.push(scope);
     });
     el.classList.add(SCANNED_MARKER);
   });
@@ -566,8 +569,11 @@ const DIRECT_INJECT_MAX_ATTEMPTS = 20;
  * reporting still records an impression.
  */
 function reportPropositionDisplay(instanceName, propositions) {
-  if (!propositions.length) return;
-  propositions.forEach((p) => {
+  // Idempotent: each proposition is reported at most once for the life of the page, so this is
+  // safe to call per decoration tick (and from deferred page-activation callbacks).
+  const toReport = (propositions || []).filter((p) => p && !reportedPropositionIds.has(p.id));
+  if (!toReport.length) return;
+  toReport.forEach((p) => {
     renderedPropositionIds.add(p.id);
     reportedPropositionIds.add(p.id);
   });
@@ -576,7 +582,7 @@ function reportPropositionDisplay(instanceName, propositions) {
       eventType: 'decisioning.propositionDisplay',
       _experience: {
         decisioning: {
-          propositions: propositions.map((p) => ({
+          propositions: toReport.map((p) => ({
             id: p.id,
             scope: p.scope,
             scopeDetails: p.scopeDetails,
@@ -612,7 +618,10 @@ async function applyPropositions(instanceName) {
     renderDecisions: false,
     personalization: {
       sendDisplayEvent: false,
-      ...(config.decisionScopes?.length && { decisionScopes: config.decisionScopes }),
+      // Always request `__view__` alongside any named scopes. The Web SDK treats
+      // `decisionScopes` as the exact set to fetch, so omitting `__view__` here would silently
+      // drop all VEC / page-load (view) propositions on any page that has a discovered mbox.
+      decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
     },
   });
   response = renderDecisionResponse;
@@ -713,16 +722,28 @@ async function applyPropositions(instanceName) {
       'applyPropositions',
       applyOptions,
     );
-    appliedPropositions.propositions.forEach((item) => {
-      if (item.renderAttempted) {
-        propositions = propositions.filter((p) => p.id !== item.id);
-      }
-    });
+    // Single guarded pass over the applied items: drop rendered propositions from the retry set
+    // and collect the freshly-rendered ones to report. Reporting display *here* (as alloy
+    // actually renders, across decoration ticks) rather than at page-activation avoids the race
+    // where activation fires before async decoration has applied anything.
+    const renderedNow = [];
     appliedPropositions.propositions?.forEach((appliedItem) => {
-      if (appliedItem.renderAttempted) {
-        renderedPropositionIds.add(appliedItem.id);
+      if (!appliedItem.renderAttempted) return;
+      propositions = propositions.filter((p) => p.id !== appliedItem.id);
+      if (!renderedPropositionIds.has(appliedItem.id)) {
+        const original = response?.propositions?.find((p) => p.id === appliedItem.id);
+        renderedNow.push({
+          id: appliedItem.id,
+          scope: appliedItem.scope ?? original?.scope,
+          scopeDetails: appliedItem.scopeDetails ?? original?.scopeDetails,
+        });
       }
+      renderedPropositionIds.add(appliedItem.id);
     });
+    // Prerender-aware: defer the display impression until the page is actually activated.
+    if (renderedNow.length) {
+      onPageActivation(() => reportPropositionDisplay(instanceName, renderedNow));
+    }
   });
   return renderDecisionResponse;
 }
@@ -891,28 +912,15 @@ export async function martechEager() {
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
     ).then((result) => {
-      onPageActivation(() => {
-        const toReport = (response?.propositions || []).filter(
-          (p) => renderedPropositionIds.has(p.id) && !reportedPropositionIds.has(p.id),
-        );
-        if (!config.trackPageView && !toReport.length) return;
-        sendAnalyticsEvent({
-          eventType: config.trackPageView
-            ? 'web.webpagedetails.pageViews'
-            : 'decisioning.propositionDisplay',
-          ...(toReport.length && {
-            _experience: {
-              decisioning: {
-                propositions: toReport.map((p) => ({
-                  id: p.id, scope: p.scope, scopeDetails: p.scopeDetails,
-                })),
-                propositionEventType: { display: 1 },
-              },
-            },
-          }),
+      // Page-view tracking is decoupled from proposition rendering. Proposition *display* events
+      // are emitted from applyPropositions as each proposition actually renders (see
+      // reportPropositionDisplay), so they aren't lost to the race between page activation and
+      // the async decoration ticks that apply offers. Here we only fire the plain page view.
+      if (config.trackPageView) {
+        onPageActivation(() => {
+          sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
         });
-        toReport.forEach((p) => reportedPropositionIds.add(p.id));
-      });
+      }
       return result;
     }).catch(() => {
       if (alloyConfig.debugEnabled) {
