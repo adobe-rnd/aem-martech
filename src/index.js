@@ -40,19 +40,6 @@
  *                                         (non-performance path), with `__view__` always
  *                                         included.
  *                                         (defaults to [])
- * @property {Object} [propositionMetadata] Selector mapping for Form-Based HTML offers that do
- *                                          not carry a built-in CSS selector (e.g. raw HTML
- *                                          offers created manually in Target). Keys are
- *                                          decision scope names; values are
- *                                          `{ selector, actionType }` objects where actionType
- *                                          is 'setHtml', 'replaceHtml', or 'appendHtml'
- *                                          (defaults to 'setHtml'). Offers sent from DA
- *                                          via "Send to Target" carry their own selector and
- *                                          do not need an entry here. Also acts as a rescue
- *                                          override for dom-action items that arrive with a
- *                                          non-visual selector (head/body/html).
- *                                          Example: `{ 'my-hero-mbox': { selector: 'main h2',
- *                                          actionType: 'setHtml' } }`
  * @property {String|null} propositionScopeAttribute The `data-*` attribute name the plugin
  *                                          scans for to auto-discover decision scopes from
  *                                          the DOM. Multiple scopes per element supported
@@ -83,7 +70,6 @@ export const DEFAULT_CONFIG = {
   personalizationTimeout: 1000,
   shouldProcessEvent: () => true,
   decisionScopes: [],
-  propositionMetadata: {},
   propositionScopeAttribute: 'mbox',
   discoveredScopeActionType: 'setHtml',
 };
@@ -97,6 +83,12 @@ const pendingDatalayerEvents = [];
 const renderedPropositionIds = new Set();
 /** IDs of propositions that have already been reported via a manual sendEvent call. */
 const reportedPropositionIds = new Set();
+/**
+ * Scope -> { selector, actionType } map for Form-Based html-content-item offers, built only by
+ * `data-mbox` auto-discovery (see discoverPropositionScopes). Internal — there is no consumer
+ * config for hand-mapping scopes to selectors; authors declare targets via section metadata.
+ */
+const discoveredScopeMeta = new Map();
 
 const debug = (label = 'martech', ...args) => {
   if (alloyConfig?.debugEnabled) {
@@ -111,11 +103,11 @@ const debug = (label = 'martech', ...args) => {
  * case- and whitespace-insensitive), and syntactically-invalid CSS. Debug-logs the
  * reason on every rejection, prefixed with the supplied context label for traceability.
  *
- * @param {String} rawSelector The raw selector — from `item.data.selector`, from
- *                              `config.propositionMetadata[scope].selector`, or from
- *                              any other untrusted source.
- * @param {String} contextLabel Free-form short label like `html-content-item scope "foo"`
- *                              or `dom-action rescue scope "bar"`. Surfaced in debug logs.
+ * @param {String} rawSelector The raw selector — from `item.data.selector`, from the
+ *                              auto-discovered `data-mbox` synthetic selector, or any
+ *                              other untrusted source.
+ * @param {String} contextLabel Free-form short label like `html-content-item scope "foo"`.
+ *                              Surfaced in debug logs.
  * @returns {Boolean} true if the selector is non-empty, visual, and parseable; false
  *                    otherwise.
  */
@@ -465,39 +457,20 @@ let response;
 /**
  * Resolves the target selector and actionType for a Form-Based html-content-item.
  * Priority: selector embedded in item data (DA "Send to Target" offers carry this automatically)
- * > propositionMetadata config fallback (manually created raw HTML offers).
+ * > the synthetic selector auto-discovered from the section's `data-mbox` attribute.
  * @returns {{selector: String, actionType: String}|null} null when no selector can be resolved
  */
 function resolveHtmlContentTarget(item, scope) {
   const embedded = item?.data?.selector;
-  const override = config.propositionMetadata?.[scope]?.selector;
-  const selector = embedded || override;
+  const discovered = discoveredScopeMeta.get(scope);
+  const selector = embedded || discovered?.selector;
   if (!isVisualSelector(selector, `html-content-item scope "${scope}"`)) {
     return null;
   }
   const actionType = item?.data?.actionType
-    || config.propositionMetadata?.[scope]?.actionType
+    || discovered?.actionType
     || 'setHtml';
   return { selector, actionType };
-}
-
-/**
- * Applies an HTML offer's content to a target element using alloy's actionType vocabulary.
- * Mirrors what alloy itself does for setHtml/replaceHtml/appendHtml so the direct-injection
- * fallback behaves identically to the alloy-handled path.
- */
-function applyHtmlAction(target, content, actionType) {
-  const parser = new DOMParser();
-  const parsed = parser.parseFromString(content, 'text/html');
-  const nodes = [...parsed.body.childNodes];
-  if (actionType === 'appendHtml') {
-    target.append(...nodes);
-  } else if (actionType === 'setHtml') {
-    target.replaceChildren(...nodes);
-  } else {
-    // replaceHtml (alloy semantics: replace the element itself)
-    target.replaceWith(...nodes);
-  }
 }
 
 // Marker class added to every element we've already processed. The :not(.martech-mbox-scanned)
@@ -507,8 +480,9 @@ const SCANNED_MARKER = 'martech-mbox-scanned';
 /**
  * Scans the DOM under `root` for elements carrying the configured proposition-scope
  * attribute (default `data-mbox`) and registers a synthetic-class selector + actionType
- * per scope into `config.propositionMetadata` and `config.decisionScopes`. Idempotent —
- * elements marked with the SCANNED_MARKER class are skipped on subsequent calls.
+ * per scope into the internal `discoveredScopeMeta` map. Returns the discovered scope names
+ * so the caller can merge them into `config.decisionScopes`. Idempotent — elements marked
+ * with the SCANNED_MARKER class are skipped on subsequent calls.
  *
  * @param {Document|Element} root The DOM root to scan.
  * @returns {String[]} Scope names discovered during this call only (not previously-scanned).
@@ -543,15 +517,10 @@ function discoverPropositionScopes(root) {
         debug('martech', `mbox name "${scope}" sanitized to "${sanitized}" for CSS class`);
       }
       el.classList.add(`martech-mbox-${sanitized}`);
-      // Consumer-supplied metadata wins on the selector/actionType, but the scope must still be
-      // registered for fetching regardless — otherwise a pre-supplied propositionMetadata entry
-      // without a matching decisionScopes entry would mean the offer is never requested.
-      if (!config.propositionMetadata[scope]) {
-        config.propositionMetadata[scope] = {
-          selector: `.martech-mbox-${sanitized}`,
-          actionType,
-        };
-      }
+      discoveredScopeMeta.set(scope, {
+        selector: `.martech-mbox-${sanitized}`,
+        actionType,
+      });
       newScopes.push(scope);
     });
     el.classList.add(SCANNED_MARKER);
@@ -559,14 +528,10 @@ function discoverPropositionScopes(root) {
   return newScopes;
 }
 
-// Cap retries for direct-inject entries so a typo'd or never-rendering selector can't
-// keep generating querySelector calls for the life of the page.
-const DIRECT_INJECT_MAX_ATTEMPTS = 20;
-
 /**
  * Fires a single `decisioning.propositionDisplay` event covering one or more propositions
- * we applied outside the alloy pipeline (non-visual dom-action fallback), so Target Activity
- * reporting still records an impression.
+ * alloy has rendered, so Target Activity reporting records an impression. Idempotent per
+ * proposition id for the life of the page.
  */
 function reportPropositionDisplay(instanceName, propositions) {
   // Idempotent: each proposition is reported at most once for the life of the page, so this is
@@ -628,13 +593,10 @@ async function applyPropositions(instanceName) {
   if (!renderDecisionResponse?.propositions) {
     return [];
   }
-  // dom-action items targeting a non-visual element (head/body/html) are usually a misconfigured
-  // VEC offer — alloy would inject into <head>/<body>/<html>. Pull them out of the alloy pipeline
-  // and apply them via propositionMetadata override (or drop them) instead. Also drop
-  // html-content-item items that have no resolvable selector so they aren't retried every tick.
-  // Build the html-content-item metadata map up front so the per-tick callback doesn't have to
-  // re-walk the propositions tree.
-  let directInjectQueue = [];
+  // dom-action (VEC) items carry their own selector and are applied by alloy directly, exactly
+  // as upstream does. html-content-item (Form-Based) offers don't carry a selector, so resolve a
+  // target from the offer or from `data-mbox` auto-discovery and hand it to alloy via the metadata
+  // map; drop items with no resolvable selector so they aren't retried every tick.
   const htmlContentMetadata = {};
   let propositions = window.structuredClone(renderDecisionResponse.propositions)
     .filter((p) => p.items.some(
@@ -643,25 +605,6 @@ async function applyPropositions(instanceName) {
     .map((p) => ({
       ...p,
       items: p.items.map((item) => {
-        const rawSelector = item?.data?.selector;
-        const normalizedSelector = typeof rawSelector === 'string'
-          ? rawSelector.trim().toLowerCase()
-          : '';
-        if (item.schema === SCHEMA_DOM_ACTION
-          && NON_VISUAL_SELECTORS.has(normalizedSelector)) {
-          const override = config.propositionMetadata?.[p.scope];
-          if (!isVisualSelector(override?.selector, `dom-action rescue scope "${p.scope}"`)) {
-            return null;
-          }
-          directInjectQueue.push({
-            proposition: { id: p.id, scope: p.scope, scopeDetails: p.scopeDetails },
-            content: item.data.content,
-            selector: override.selector,
-            actionType: override.actionType || 'replaceHtml',
-            attempts: 0,
-          });
-          return null;
-        }
         if (item.schema === SCHEMA_HTML_CONTENT_ITEM) {
           const target = resolveHtmlContentTarget(item, p.scope);
           if (!target) {
@@ -681,36 +624,6 @@ async function applyPropositions(instanceName) {
         debug('martech', `mbox "${scope}" discovered after eager propositionFetch; not personalized this load`);
       }
     });
-
-    // Direct injection for dom-action items alloy cannot place (non-visual selector override).
-    // Re-queue items whose target hasn't been decorated yet so later mutation ticks can retry,
-    // up to DIRECT_INJECT_MAX_ATTEMPTS — past that we assume the selector is wrong and drop it.
-    if (directInjectQueue.length) {
-      const pending = directInjectQueue;
-      directInjectQueue = [];
-      const justInjected = [];
-      pending.forEach((entry) => {
-        let target;
-        try {
-          target = document.querySelector(entry.selector);
-        } catch (err) {
-          debug('martech', `propositionMetadata selector "${entry.selector}" is invalid: ${err.message}`);
-          return;
-        }
-        if (!target) {
-          entry.attempts += 1;
-          if (entry.attempts >= DIRECT_INJECT_MAX_ATTEMPTS) {
-            debug('martech', `dropping direct-inject entry after ${entry.attempts} attempts — selector "${entry.selector}" never matched`);
-            return;
-          }
-          directInjectQueue.push(entry);
-          return;
-        }
-        applyHtmlAction(target, entry.content, entry.actionType);
-        justInjected.push(entry.proposition);
-      });
-      reportPropositionDisplay(instanceName, justInjected);
-    }
     if (!propositions.length) {
       return;
     }
@@ -776,6 +689,7 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
 
   renderedPropositionIds.clear();
   reportedPropositionIds.clear();
+  discoveredScopeMeta.clear();
   initAlloyQueue(config.alloyInstanceName);
   if (config.dataLayer) {
     initDatalayer(config.dataLayerInstanceName);
