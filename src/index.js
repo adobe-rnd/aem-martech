@@ -44,7 +44,10 @@
  *                                          scans for to auto-discover decision scopes from
  *                                          the DOM. Multiple scopes per element supported
  *                                          via comma-separated values. Set to `null` to
- *                                          disable auto-discovery. (defaults to "mbox")
+ *                                          disable auto-discovery. Auto-discovery only runs in
+ *                                          the performance-optimized eager path (the default);
+ *                                          when `performanceOptimized` is false, request scopes
+ *                                          explicitly via `decisionScopes`. (defaults to "mbox")
  * @property {String} discoveredScopeActionType The default `actionType` for auto-discovered
  *                                          scopes when neither the offer nor the section's
  *                                          `data-mbox-action` attribute specifies one.
@@ -56,6 +59,8 @@ const SCHEMA_HTML_CONTENT_ITEM = 'https://ns.adobe.com/personalization/html-cont
 // Selectors that target the document chrome rather than visible content. If a dom-action item
 // arrives with one of these, alloy's applyPropositions injects directly into <head>/<body>/<html>.
 const NON_VISUAL_SELECTORS = new Set(['head', 'body', 'html']);
+// Action types the plugin understands for applying an offer to its target element.
+const VALID_ACTION_TYPES = new Set(['setHtml', 'replaceHtml', 'appendHtml']);
 
 export const DEFAULT_CONFIG = {
   analytics: true,
@@ -501,26 +506,36 @@ function discoverPropositionScopes(root) {
     }
     const scopes = raw.split(',').map((s) => s.trim()).filter(Boolean);
     const elementAction = el.getAttribute(`data-${attr}-action`);
-    const validActions = new Set(['setHtml', 'replaceHtml', 'appendHtml']);
     let actionType;
-    if (elementAction && validActions.has(elementAction)) {
+    if (elementAction && VALID_ACTION_TYPES.has(elementAction)) {
       actionType = elementAction;
     } else {
       if (elementAction) {
         debug('martech', `ignoring invalid data-${attr}-action="${elementAction}"; valid values: setHtml, replaceHtml, appendHtml`);
       }
-      actionType = config.discoveredScopeActionType || 'setHtml';
+      // Fall back to the configured default, validating it too — a bad config value shouldn't
+      // be handed to alloy as an actionType.
+      const configured = config.discoveredScopeActionType;
+      if (configured && !VALID_ACTION_TYPES.has(configured)) {
+        debug('martech', `invalid discoveredScopeActionType "${configured}"; using "setHtml"`);
+      }
+      actionType = VALID_ACTION_TYPES.has(configured) ? configured : 'setHtml';
     }
     scopes.forEach((scope) => {
       const sanitized = scope.replace(/[^a-zA-Z0-9_-]/g, '-');
       if (sanitized !== scope) {
         debug('martech', `mbox name "${scope}" sanitized to "${sanitized}" for CSS class`);
       }
+      const scopeSelector = `.martech-mbox-${sanitized}`;
+      // Distinct raw scopes can sanitize to the same class (e.g. "a.b" and "a-b"). Warn so a
+      // silent wrong-element application is at least discoverable in debug.
+      const collision = [...discoveredScopeMeta]
+        .find(([s, m]) => s !== scope && m.selector === scopeSelector);
+      if (collision) {
+        debug('martech', `mbox "${scope}" and "${collision[0]}" both map to ${scopeSelector}; an offer for one may target the other's element`);
+      }
       el.classList.add(`martech-mbox-${sanitized}`);
-      discoveredScopeMeta.set(scope, {
-        selector: `.martech-mbox-${sanitized}`,
-        actionType,
-      });
+      discoveredScopeMeta.set(scope, { selector: scopeSelector, actionType });
       newScopes.push(scope);
     });
     el.classList.add(SCANNED_MARKER);
