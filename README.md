@@ -1,6 +1,4 @@
-:construction: This is an early access technology and is still heavily in development. Reach out to us over Slack before using it.
-
-# AEM Edge Delivery Services Marketing Technology
+![aem-martech](./aem-martech.jpg)
 
 The AEM Marketing Technology plugin helps you quickly set up a complete MarTech stack for your AEM project. It is currently available to customers in collaboration with AEM Engineering via co-innovation VIP Projects. To implement your use cases, please reach out to the AEM Engineering team in the Slack channel dedicated to your project.
 
