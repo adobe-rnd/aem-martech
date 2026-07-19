@@ -12,8 +12,11 @@ export function resetBrowserState(extraGlobals = []) {
     delete window[key];
   });
   document.head.innerHTML = '';
-  document.body.innerHTML = '<main></main>';
-  document.body.style.visibility = '';
+  // Replace the body node entirely so MutationObservers registered by a previous test
+  // (the library never disconnects them) do not fire into stale module instances
+  const body = document.createElement('body');
+  body.innerHTML = '<main></main>';
+  document.documentElement.replaceChild(body, document.body);
   vi.resetModules();
 }
 
