@@ -598,28 +598,36 @@ export async function martechEager() {
     return promiseWithTimeout(
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
-    ).then((result) => {
-      onPageActivation(() => {
-        // Automatically report displayed propositions
-        sendAnalyticsEvent({
-          eventType: config.trackPageView
-            ? 'web.webpagedetails.pageViews'
-            : 'decisioning.propositionDisplay',
-          _experience: {
-            decisioning: {
-              propositions: response.propositions
-                .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
-              propositionEventType: { display: 1 },
-            },
-          },
-        });
-      });
-      return result;
-    }).catch(() => {
+    ).catch(() => {
       if (alloyConfig.debugEnabled) {
         // eslint-disable-next-line no-console
         console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
       }
+    }).finally(() => {
+      // Track the page view (and report displayed propositions) even if the personalization
+      // fetch timed out or returned no propositions, so analytics are not lost
+      onPageActivation(() => {
+        const propositions = response?.propositions
+          ?.map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+        if (!config.trackPageView && !propositions?.length) {
+          // Without propositions there is nothing to report, and the page view itself
+          // is tracked elsewhere
+          return;
+        }
+        sendAnalyticsEvent({
+          eventType: config.trackPageView
+            ? 'web.webpagedetails.pageViews'
+            : 'decisioning.propositionDisplay',
+          ...(propositions?.length && {
+            _experience: {
+              decisioning: {
+                propositions,
+                propositionEventType: { display: 1 },
+              },
+            },
+          }),
+        });
+      });
     });
   }
   if (config.personalization) {
@@ -637,21 +645,37 @@ export async function martechLazy() {
     await loadAndConfigureDataLayer({});
   }
 
-  if (!config.personalization && config.performanceOptimized) {
-    await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+  if (!config.personalization) {
+    // Alloy is only loaded in the eager phase when personalization is enabled,
+    // so make sure it is loaded here in all other configurations
+    if (!isAlloyConfigured) {
+      await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+    }
     if (config.trackPageView) {
       onPageActivation(() => {
         sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
       });
     }
   } else if (!config.performanceOptimized) {
-    const renderDecisionResponse = await sendEvent({
-      renderDecisions: true,
-      decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
-    });
-    response = renderDecisionResponse;
-    document.body.style.visibility = null;
-    // Automatically report displayed propositions
+    try {
+      const renderDecisionResponse = await promiseWithTimeout(
+        sendEvent({
+          renderDecisions: true,
+          decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
+        }),
+        config.personalizationTimeout,
+      );
+      response = renderDecisionResponse;
+    } catch (err) {
+      if (alloyConfig.debugEnabled) {
+        // eslint-disable-next-line no-console
+        console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
+      }
+    } finally {
+      // Always restore the page visibility, even if the personalization request failed
+      // (network error, request blocked by an ad blocker, consent not given in time, …)
+      document.body.style.visibility = null;
+    }
     if (config.trackPageView) {
       onPageActivation(() => {
         sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
