@@ -135,9 +135,12 @@ function initAlloyQueue(instanceName) {
  * @param {String} instanceName The name of the instance in the blobal scope
  */
 function initDatalayer(instanceName) {
-  window[instanceName] ||= [];
+  // ACDL only ever processes the `adobeDataLayer` array, so always initialize it, and alias
+  // custom instance names to the same array so events pushed before the library is loaded
+  // are picked up when it initializes
+  window.adobeDataLayer ||= [];
   if (instanceName !== 'adobeDataLayer') {
-    window[instanceName] ||= [];
+    window[instanceName] ||= window.adobeDataLayer;
   }
 }
 
@@ -280,19 +283,21 @@ async function loadAndConfigureDataLayer() {
     }
     window[config.dataLayerInstanceName].push((dl) => {
       dl.addEventListener('adobeDataLayer:event', (payload) => {
-        const eventType = payload.event;
-        const args = [
-          { eventType, ...payload.xdm },
-          payload.data,
-          payload.configOverrides,
-        ];
-
         // Check whether the event should be processed or not
         if (!config.shouldProcessEvent(payload)) {
           return;
         }
 
-        delete payload.event;
+        // Do not mutate the payload: it is the data layer's own state object and other
+        // listeners may rely on it
+        const {
+          event: eventType, xdm, data, configOverrides,
+        } = payload;
+        const args = [
+          { eventType, ...xdm },
+          data,
+          configOverrides,
+        ];
 
         if (!isAlloyConfigured) {
           pendingDatalayerEvents.push(args);
@@ -310,7 +315,11 @@ async function loadAndConfigureDataLayer() {
       data = {};
     }
     if (!el.id) {
-      const index = [...document.querySelectorAll(`.${el.classList[0]}`)].indexOf(el);
+      const blockClass = el.classList[0];
+      const siblings = blockClass
+        ? [...document.querySelectorAll(`.${blockClass}`)]
+        : [...document.querySelectorAll('[data-block-data-layer]')].filter((e) => !e.classList.length);
+      const index = siblings.indexOf(el);
       el.id = `${data.parentId ? `${data.parentId}-` : ''}${index + 1}`;
     }
     window[config.dataLayerInstanceName].push({
@@ -465,12 +474,18 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     ...getDefaultAlloyConfiguration(),
     ...webSDKConfig,
     onBeforeEventSend: (payload) => {
-      // ACDL is initialized in the lazy phase, so fetching from the JS array as a fallback during
-      // the eager phase
-      if (config.includeDataLayerState) {
-        const dlState = window.adobeDataLayer.getState
-          ? window.adobeDataLayer.getState()
-          : window.adobeDataLayer[0];
+      // ACDL is initialized in the lazy phase, so fall back to merging the queued plain
+      // objects during the eager phase
+      if (config.dataLayer && config.includeDataLayerState) {
+        const dl = window[config.dataLayerInstanceName];
+        let dlState;
+        if (dl?.getState) {
+          dlState = dl.getState();
+        } else if (Array.isArray(dl)) {
+          dlState = dl
+            .filter((entry) => typeof entry === 'object' && entry !== null && !entry.event)
+            .reduce((state, entry) => ({ ...state, ...entry }), {});
+        }
         payload.xdm = {
           ...payload.xdm,
           ...dlState,
@@ -634,7 +649,7 @@ export async function martechEager() {
  */
 export async function martechLazy() {
   if (config.dataLayer) {
-    await loadAndConfigureDataLayer({});
+    await loadAndConfigureDataLayer();
   }
 
   if (!config.personalization && config.performanceOptimized) {
