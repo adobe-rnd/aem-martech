@@ -181,6 +181,9 @@ export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverri
   console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendAnalyticsEvent` method is called');
   // eslint-disable-next-line no-console
   console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
+  if (!config.analytics) {
+    return Promise.resolve();
+  }
   try {
     return sendEvent({
       documentUnloading: true,
