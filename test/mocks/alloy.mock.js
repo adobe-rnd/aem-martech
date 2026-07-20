@@ -40,13 +40,8 @@ function createInstance() {
   };
   instance.calls = [];
   instance.cancelledCalls = [];
-  // The stub defers queue pushes with setTimeout, so some commands may only be pushed after
-  // this module has loaded. Mimic a live queue by executing those pushes directly.
-  instance.q = {
-    push: ([resolve, reject, args]) => {
-      instance(...args).then(resolve, reject);
-    },
-  };
+  // Like the real SDK, the live instance does NOT expose a command queue: the stub queue is
+  // drained exactly once at load time, and anything pushed to it afterwards is never read
   return instance;
 }
 

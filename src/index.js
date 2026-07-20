@@ -119,12 +119,23 @@ function initAlloyQueue(instanceName) {
   }
   // eslint-disable-next-line no-underscore-dangle
   (window.__alloyNS ||= []).push(instanceName);
-  window[instanceName] = (...args) => new Promise((resolve, reject) => {
+  const stub = (...args) => new Promise((resolve, reject) => {
+    // Unlike the official base code, the push is deferred with a setTimeout: it breaks a
+    // spike of commands (typically the data preparation projects do before the LCP) into
+    // separate tasks so they do not pile up into one long blocking task during page load
     window.setTimeout(() => {
-      window[instanceName].q.push([resolve, reject, args]);
+      const instance = window[instanceName];
+      if (instance !== stub) {
+        // The real SDK replaced the stub (and drained its queue) while the push was
+        // pending, so forward the command to it directly or it would be lost
+        instance(...args).then(resolve, reject);
+      } else {
+        stub.q.push([resolve, reject, args]);
+      }
     });
   });
-  window[instanceName].q = [];
+  stub.q = [];
+  window[instanceName] = stub;
 }
 
 /**
