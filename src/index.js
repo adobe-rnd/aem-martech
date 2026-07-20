@@ -340,17 +340,18 @@ async function loadAndConfigureDataLayer() {
  * Documentation:
  * https://experienceleague.adobe.com/en/docs/experience-platform/landing/governance-privacy-security/consent/adobe/dataset#structure
  * https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents
- * @param {Object} config The consent config to use
- * @param {Boolean} [config.collect] Whether data collection is allowed
- * @param {Boolean|Object} [config.marketing] Whether data can be used for marketing purposes
- * @param {String} [config.marketing.preferred] The preferred medium for marketing communication
- * @param {Boolean} [config.marketing.any] Whether any marketing channels are consented to or not
- * @param {Boolean} [config.marketing.email] Whether marketing emails are consented to or not
- * @param {Boolean} [config.marketing.push] Whether marketing push notifications are consented to
- * @param {Boolean} [config.marketing.sms] Whether marketing messages are consented to or not
- * @param {Boolean} [config.personalize] Whether data can be used for personalization purposes
- * @param {Boolean} [config.share] Whether data can be shared/sold to 3rd parties
- * @returns {Promise<*>} a promise that the consent setting shave been updated
+ * @param {Object} consent The consent config to use
+ * @param {Boolean} [consent.collect] Whether data collection is allowed
+ * @param {Boolean|Object} [consent.marketing] Whether data can be used for marketing purposes
+ * @param {String} [consent.marketing.preferred] The preferred medium for marketing communication
+ * @param {Boolean} [consent.marketing.email] Whether marketing emails are consented to or not
+ * @param {Boolean} [consent.marketing.push] Whether marketing push notifications are consented to
+ * @param {Boolean} [consent.marketing.sms] Whether marketing messages are consented to or not
+ * @param {Boolean} [consent.personalize] Whether data can be used for personalization purposes
+ * @param {Boolean} [consent.share] Whether data can be shared/sold to 3rd parties
+ * @returns {Promise<*>} a promise that the consent settings have been applied (if alloy is not
+ *                       configured yet, the promise only resolves once it is and the queued
+ *                       consent has effectively been set)
  */
 export async function updateUserConsent(consent) {
   // eslint-disable-next-line no-console
@@ -366,7 +367,9 @@ export async function updateUserConsent(consent) {
     marketingConfig = {
       preferred: consent.marketing.preferred || 'email',
       any: {
-        val: consent.marketing.email ? 'y' : 'n',
+        val: (consent.marketing.email || consent.marketing.push || consent.marketing.sms)
+          ? 'y'
+          : 'n',
       },
       email: {
         val: consent.marketing.email ? 'y' : 'n',
@@ -396,8 +399,9 @@ export async function updateUserConsent(consent) {
   if (isAlloyConfigured) {
     return fn();
   }
-  pendingAlloyCommands.push(fn);
-  return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    pendingAlloyCommands.push(() => fn().then(resolve, reject));
+  });
 }
 
 let response;
