@@ -669,6 +669,16 @@ export async function martechDelayed() {
   console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `martechDelayed` method is called');
 
   const { launchUrls } = config;
-  return Promise.all(launchUrls.map((url) => import(url)))
+  // Load the containers as classic scripts rather than via a dynamic import: ES modules
+  // execute in strict mode, which can break Launch custom-code actions and extensions
+  // relying on sloppy-mode semantics (implicit globals, `this` being the window, …)
+  return Promise.all(launchUrls.map((url) => new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`Could not load launch container: ${url}`));
+    document.head.appendChild(script);
+  })))
     .catch((err) => handleRejectedPromise(new Error(err)));
 }
