@@ -179,10 +179,11 @@ describe('updateUserConsent', () => {
   it('queues consent until alloy is configured', async () => {
     const { initMartech, updateUserConsent, martechLazy } = await importMartech();
     await initMartech(TEST_WEBSDK_CONFIG, { personalization: false });
-    await updateUserConsent({ collect: true });
+    // The promise only resolves once alloy is configured and the consent is applied
+    const promise = updateUserConsent({ collect: true });
     expect(window.alloy.calls).toBeUndefined();
     await martechLazy();
-    await flushAsync();
+    await promise;
     expect(alloyCalls('setConsent').length).toBe(1);
   });
 });
