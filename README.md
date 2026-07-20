@@ -259,7 +259,7 @@ Initializes the library. This should be called once in `loadEager`.
 ---
 
 ### `updateUserConsent(consent)`
-Sets user consent based on the IAB TCF 2.0 standard.
+Sets user consent using the [Adobe standard v2.0](https://experienceleague.adobe.com/en/docs/experience-platform/landing/governance-privacy-security/consent/adobe/dataset) format. If you use a CMP based on IAB TCF 2.0, map its categories to the `collect`/`marketing`/`personalize`/`share` flags as shown in the [Consent Management](#consent-management) examples.
 
 - **`consent`** `{Object}`: An object detailing user consent choices (`collect`, `marketing`, `personalize`, `share`).
 
@@ -386,8 +386,15 @@ SDK initialization and configuration live in your project's code rather than the
 ## Dependencies
 
 This plugin includes the following core libraries:
-- **Adobe Experience Platform WebSDK**: `v2.28.0` (`alloy.min.js`)
-- **Adobe Client Data Layer**: `v2.0.2` (`acdl.min.js`)
+- **Adobe Experience Platform WebSDK**: `v2.31.1` (`alloy.min.js`)
+- **Adobe Client Data Layer**: `v3.0.1` (`acdl.min.js`)
+
+To update the vendored copies from Adobe's official distribution channels (the WebSDK
+self-hosting CDN and the ACDL npm package), and keep the version numbers above in sync, run:
+```sh
+npm run update:vendor               # latest published versions
+npm run update:vendor -- 2.31.1 3.0.1  # or specific versions
+```
 
 ## Web SDK Configuration
 
