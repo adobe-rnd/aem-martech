@@ -658,7 +658,13 @@ export function initRumTracking(sampleRUM, options = {}) {
       cb(data);
     });
   } else {
-    track = (ev, cb) => document.addEventListener('rum', (data) => {
+    track = (ev, cb) => document.addEventListener('rum', (event) => {
+      // Filter for the requested checkpoint and unwrap the custom event detail, so both
+      // code paths pass the same payload shape to the callback
+      const data = event.detail || {};
+      if (data.checkpoint !== ev) {
+        return;
+      }
       debug('rum', ev, data);
       cb(data);
     });
