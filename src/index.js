@@ -136,12 +136,23 @@ function initAlloyQueue(instanceName) {
   }
   // eslint-disable-next-line no-underscore-dangle
   (window.__alloyNS ||= []).push(instanceName);
-  window[instanceName] = (...args) => new Promise((resolve, reject) => {
+  const stub = (...args) => new Promise((resolve, reject) => {
+    // Unlike the official base code, the push is deferred with a setTimeout: it breaks a
+    // spike of commands (typically the data preparation projects do before the LCP) into
+    // separate tasks so they do not pile up into one long blocking task during page load
     window.setTimeout(() => {
-      window[instanceName].q.push([resolve, reject, args]);
+      const instance = window[instanceName];
+      if (instance !== stub) {
+        // The real SDK replaced the stub (and drained its queue) while the push was
+        // pending, so forward the command to it directly or it would be lost
+        instance(...args).then(resolve, reject);
+      } else {
+        stub.q.push([resolve, reject, args]);
+      }
     });
   });
-  window[instanceName].q = [];
+  stub.q = [];
+  window[instanceName] = stub;
 }
 
 /**
@@ -152,9 +163,12 @@ function initAlloyQueue(instanceName) {
  * @param {String} instanceName The name of the instance in the blobal scope
  */
 function initDatalayer(instanceName) {
-  window[instanceName] ||= [];
+  // ACDL only ever processes the `adobeDataLayer` array, so always initialize it, and alias
+  // custom instance names to the same array so events pushed before the library is loaded
+  // are picked up when it initializes
+  window.adobeDataLayer ||= [];
   if (instanceName !== 'adobeDataLayer') {
-    window[instanceName] ||= [];
+    window[instanceName] ||= window.adobeDataLayer;
   }
 }
 
@@ -196,6 +210,9 @@ export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverri
   assertInitialized('sendAnalyticsEvent');
   // eslint-disable-next-line no-console
   console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
+  if (!config.analytics) {
+    return Promise.resolve();
+  }
   try {
     // Await here so rejections are actually caught by this block and decorated;
     // returning the pending promise would bypass the catch entirely
@@ -233,6 +250,7 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
 /**
  * Runs the specified function on every decorated block/section
  * @param {Function} fn The function to call
+ * @returns {Function} a function to stop watching for new decorated blocks/sections
  */
 function onDecoratedElement(fn) {
   // Apply propositions to all already decorated blocks/sections
@@ -247,16 +265,19 @@ function onDecoratedElement(fn) {
       fn();
     }
   });
-  // Watch sections and blocks being decorated async
-  observer.observe(document.querySelector('main'), {
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['data-block-status', 'data-section-status'],
-  });
+  // Watch sections and blocks being decorated async (pages without a `main`, like error
+  // pages, are still watched via the body observer below)
+  const main = document.querySelector('main');
+  if (main) {
+    observer.observe(main, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-block-status', 'data-section-status'],
+    });
+  }
   // Watch anything else added to the body
-  document.querySelectorAll('body').forEach((el) => {
-    observer.observe(el, { childList: true });
-  });
+  observer.observe(document.body, { childList: true });
+  return () => observer.disconnect();
 }
 
 /**
@@ -298,19 +319,21 @@ async function loadAndConfigureDataLayer() {
     }
     window[config.dataLayerInstanceName].push((dl) => {
       dl.addEventListener('adobeDataLayer:event', (payload) => {
-        const eventType = payload.event;
-        const args = [
-          { eventType, ...payload.xdm },
-          payload.data,
-          payload.configOverrides,
-        ];
-
         // Check whether the event should be processed or not
         if (!config.shouldProcessEvent(payload)) {
           return;
         }
 
-        delete payload.event;
+        // Do not mutate the payload: it is the data layer's own state object and other
+        // listeners may rely on it
+        const {
+          event: eventType, xdm, data, configOverrides,
+        } = payload;
+        const args = [
+          { eventType, ...xdm },
+          data,
+          configOverrides,
+        ];
 
         if (!isAlloyConfigured) {
           pendingDatalayerEvents.push(args);
@@ -328,7 +351,11 @@ async function loadAndConfigureDataLayer() {
       data = {};
     }
     if (!el.id) {
-      const index = [...document.querySelectorAll(`.${el.classList[0]}`)].indexOf(el);
+      const blockClass = el.classList[0];
+      const siblings = blockClass
+        ? [...document.querySelectorAll(`.${blockClass}`)]
+        : [...document.querySelectorAll('[data-block-data-layer]')].filter((e) => !e.classList.length);
+      const index = siblings.indexOf(el);
       el.id = `${data.parentId ? `${data.parentId}-` : ''}${index + 1}`;
     }
     window[config.dataLayerInstanceName].push({
@@ -342,17 +369,18 @@ async function loadAndConfigureDataLayer() {
  * Documentation:
  * https://experienceleague.adobe.com/en/docs/experience-platform/landing/governance-privacy-security/consent/adobe/dataset#structure
  * https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents
- * @param {Object} config The consent config to use
- * @param {Boolean} [config.collect] Whether data collection is allowed
- * @param {Boolean|Object} [config.marketing] Whether data can be used for marketing purposes
- * @param {String} [config.marketing.preferred] The preferred medium for marketing communication
- * @param {Boolean} [config.marketing.any] Whether any marketing channels are consented to or not
- * @param {Boolean} [config.marketing.email] Whether marketing emails are consented to or not
- * @param {Boolean} [config.marketing.push] Whether marketing push notifications are consented to
- * @param {Boolean} [config.marketing.sms] Whether marketing messages are consented to or not
- * @param {Boolean} [config.personalize] Whether data can be used for personalization purposes
- * @param {Boolean} [config.share] Whether data can be shared/sold to 3rd parties
- * @returns {Promise<*>} a promise that the consent setting shave been updated
+ * @param {Object} consent The consent config to use
+ * @param {Boolean} [consent.collect] Whether data collection is allowed
+ * @param {Boolean|Object} [consent.marketing] Whether data can be used for marketing purposes
+ * @param {String} [consent.marketing.preferred] The preferred medium for marketing communication
+ * @param {Boolean} [consent.marketing.email] Whether marketing emails are consented to or not
+ * @param {Boolean} [consent.marketing.push] Whether marketing push notifications are consented to
+ * @param {Boolean} [consent.marketing.sms] Whether marketing messages are consented to or not
+ * @param {Boolean} [consent.personalize] Whether data can be used for personalization purposes
+ * @param {Boolean} [consent.share] Whether data can be shared/sold to 3rd parties
+ * @returns {Promise<*>} a promise that the consent settings have been applied (if alloy is not
+ *                       configured yet, the promise only resolves once it is and the queued
+ *                       consent has effectively been set)
  */
 export async function updateUserConsent(consent) {
   assertInitialized('updateUserConsent');
@@ -367,7 +395,9 @@ export async function updateUserConsent(consent) {
     marketingConfig = {
       preferred: consent.marketing.preferred || 'email',
       any: {
-        val: consent.marketing.email ? 'y' : 'n',
+        val: (consent.marketing.email || consent.marketing.push || consent.marketing.sms)
+          ? 'y'
+          : 'n',
       },
       email: {
         val: consent.marketing.email ? 'y' : 'n',
@@ -397,11 +427,58 @@ export async function updateUserConsent(consent) {
   if (isAlloyConfigured) {
     return fn();
   }
-  pendingAlloyCommands.push(fn);
-  return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    pendingAlloyCommands.push(() => fn().then(resolve, reject));
+  });
 }
 
 let response;
+// Tracks which of the fetched propositions are dom-actions, which of those were effectively
+// rendered, and which were already reported as displayed to the backend
+let domActionPropositionIds = new Set();
+const renderedPropositionIds = new Set();
+const reportedPropositionIds = new Set();
+let initialDisplayReported = false;
+let personalizationTimedOut = false;
+
+/**
+ * Reports the specified propositions as displayed to the backend.
+ * @param {Object[]} propositions the propositions that were displayed
+ * @returns a promise that the display event was sent
+ */
+function reportDisplayedPropositions(propositions) {
+  return sendAnalyticsEvent({
+    eventType: 'decisioning.propositionDisplay',
+    _experience: {
+      decisioning: {
+        propositions,
+        propositionEventType: { display: 1 },
+      },
+    },
+  });
+}
+
+/**
+ * Reports propositions that were rendered after the initial display report was already sent
+ * (i.e. on blocks that were decorated late), so their displays are not lost.
+ * @param {String[]} propositionIds the ids of the newly rendered propositions
+ */
+function reportLateDisplayedPropositions(propositionIds) {
+  if (!initialDisplayReported) {
+    // The initial report has not been sent yet, and will include those propositions
+    return;
+  }
+  const newlyDisplayed = (response?.propositions || [])
+    .filter((p) => propositionIds.includes(p.id) && !reportedPropositionIds.has(p.id))
+    .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+  if (!newlyDisplayed.length) {
+    return;
+  }
+  newlyDisplayed.forEach((p) => reportedPropositionIds.add(p.id));
+  onPageActivation(() => {
+    reportDisplayedPropositions(newlyDisplayed);
+  });
+}
 
 /**
  * Fetching propositions from the backend and applying the propositions as the AEM EDS page loads
@@ -426,24 +503,58 @@ async function applyPropositions(instanceName) {
   if (!renderDecisionResponse?.propositions) {
     return [];
   }
+  if (personalizationTimedOut) {
+    // The response came back after the personalization timeout: the page is already showing
+    // the default content, so do not apply the propositions anymore to avoid flickering
+    return renderDecisionResponse;
+  }
   let propositions = window.structuredClone(renderDecisionResponse.propositions)
     .filter((p) => p.items.some(
       (i) => i.schema === 'https://ns.adobe.com/personalization/dom-action',
     ));
-  onDecoratedElement(async () => {
-    if (!propositions.length) {
+  domActionPropositionIds = new Set(propositions.map((p) => p.id));
+  let disconnect;
+  let isApplying = false;
+  let pendingRun = false;
+  const run = async () => {
+    if (!propositions.length || personalizationTimedOut) {
+      disconnect?.();
       return;
     }
-    const appliedPropositions = await window[instanceName](
-      'applyPropositions',
-      { propositions },
-    );
-    appliedPropositions.propositions.forEach((item) => {
-      if (item.renderAttempted) {
-        propositions = propositions.filter((p) => p.id !== item.id);
+    // Serialize the applications, so concurrent DOM updates do not apply the same
+    // propositions twice; a trailing run picks up whatever was decorated in the meantime
+    if (isApplying) {
+      pendingRun = true;
+      return;
+    }
+    isApplying = true;
+    try {
+      const appliedPropositions = await window[instanceName](
+        'applyPropositions',
+        { propositions },
+      );
+      const newlyRendered = [];
+      appliedPropositions.propositions.forEach((item) => {
+        if (item.renderAttempted) {
+          renderedPropositionIds.add(item.id);
+          newlyRendered.push(item.id);
+          propositions = propositions.filter((p) => p.id !== item.id);
+        }
+      });
+      reportLateDisplayedPropositions(newlyRendered);
+      if (!propositions.length) {
+        // Everything was applied, no need to keep watching the DOM
+        disconnect?.();
       }
-    });
-  });
+    } finally {
+      isApplying = false;
+      if (pendingRun) {
+        pendingRun = false;
+        run();
+      }
+    }
+  };
+  disconnect = onDecoratedElement(run);
   return renderDecisionResponse;
 }
 
@@ -485,12 +596,18 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     ...getDefaultAlloyConfiguration(),
     ...webSDKConfig,
     onBeforeEventSend: (payload) => {
-      // ACDL is initialized in the lazy phase, so fetching from the JS array as a fallback during
-      // the eager phase
-      if (config.includeDataLayerState) {
-        const dlState = window.adobeDataLayer.getState
-          ? window.adobeDataLayer.getState()
-          : window.adobeDataLayer[0];
+      // ACDL is initialized in the lazy phase, so fall back to merging the queued plain
+      // objects during the eager phase
+      if (config.dataLayer && config.includeDataLayerState) {
+        const dl = window[config.dataLayerInstanceName];
+        let dlState;
+        if (dl?.getState) {
+          dlState = dl.getState();
+        } else if (Array.isArray(dl)) {
+          dlState = dl
+            .filter((entry) => typeof entry === 'object' && entry !== null && !entry.event)
+            .reduce((state, entry) => ({ ...state, ...entry }), {});
+        }
         payload.xdm = {
           ...payload.xdm,
           ...dlState,
@@ -561,7 +678,13 @@ export function initRumTracking(sampleRUM, options = {}) {
       cb(data);
     });
   } else {
-    track = (ev, cb) => document.addEventListener('rum', (data) => {
+    track = (ev, cb) => document.addEventListener('rum', (event) => {
+      // Filter for the requested checkpoint and unwrap the custom event detail, so both
+      // code paths pass the same payload shape to the callback
+      const data = event.detail || {};
+      if (data.checkpoint !== ev) {
+        return;
+      }
       debug('rum', ev, data);
       cb(data);
     });
@@ -621,28 +744,44 @@ export async function martechEager() {
     return promiseWithTimeout(
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
-    ).then((result) => {
-      onPageActivation(() => {
-        // Automatically report displayed propositions
-        sendAnalyticsEvent({
-          eventType: config.trackPageView
-            ? 'web.webpagedetails.pageViews'
-            : 'decisioning.propositionDisplay',
-          _experience: {
-            decisioning: {
-              propositions: response.propositions
-                .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails })),
-              propositionEventType: { display: 1 },
-            },
-          },
-        });
-      });
-      return result;
-    }).catch(() => {
+    ).catch(() => {
+      // Stop applying propositions that arrive after the timeout: the default content is
+      // already showing and applying them late would flicker the page
+      personalizationTimedOut = true;
       if (alloyConfig.debugEnabled) {
         // eslint-disable-next-line no-console
         console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
       }
+    }).finally(() => {
+      // Track the page view (and report displayed propositions) even if the personalization
+      // fetch timed out or returned no propositions, so analytics are not lost
+      onPageActivation(() => {
+        // Only report propositions that were effectively rendered, or that are not
+        // dom-actions (and are handled by project code instead)
+        const propositions = (response?.propositions || [])
+          .filter((p) => !domActionPropositionIds.has(p.id) || renderedPropositionIds.has(p.id))
+          .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+        propositions.forEach((p) => reportedPropositionIds.add(p.id));
+        initialDisplayReported = true;
+        if (!config.trackPageView && !propositions.length) {
+          // Without propositions there is nothing to report, and the page view itself
+          // is tracked elsewhere
+          return;
+        }
+        sendAnalyticsEvent({
+          eventType: config.trackPageView
+            ? 'web.webpagedetails.pageViews'
+            : 'decisioning.propositionDisplay',
+          ...(propositions.length && {
+            _experience: {
+              decisioning: {
+                propositions,
+                propositionEventType: { display: 1 },
+              },
+            },
+          }),
+        });
+      });
     });
   }
   if (config.personalization) {
@@ -658,24 +797,40 @@ export async function martechEager() {
 export async function martechLazy() {
   assertInitialized('martechLazy');
   if (config.dataLayer) {
-    await loadAndConfigureDataLayer({});
+    await loadAndConfigureDataLayer();
   }
 
-  if (!config.personalization && config.performanceOptimized) {
-    await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+  if (!config.personalization) {
+    // Alloy is only loaded in the eager phase when personalization is enabled,
+    // so make sure it is loaded here in all other configurations
+    if (!isAlloyConfigured) {
+      await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+    }
     if (config.trackPageView) {
       onPageActivation(() => {
         sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
       });
     }
   } else if (!config.performanceOptimized) {
-    const renderDecisionResponse = await sendEvent({
-      renderDecisions: true,
-      decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
-    });
-    response = renderDecisionResponse;
-    document.body.style.visibility = null;
-    // Automatically report displayed propositions
+    try {
+      const renderDecisionResponse = await promiseWithTimeout(
+        sendEvent({
+          renderDecisions: true,
+          decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
+        }),
+        config.personalizationTimeout,
+      );
+      response = renderDecisionResponse;
+    } catch (err) {
+      if (alloyConfig.debugEnabled) {
+        // eslint-disable-next-line no-console
+        console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
+      }
+    } finally {
+      // Always restore the page visibility, even if the personalization request failed
+      // (network error, request blocked by an ad blocker, consent not given in time, …)
+      document.body.style.visibility = null;
+    }
     if (config.trackPageView) {
       onPageActivation(() => {
         sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
@@ -692,6 +847,16 @@ export async function martechDelayed() {
   assertInitialized('martechDelayed');
 
   const { launchUrls } = config;
-  return Promise.all(launchUrls.map((url) => import(url)))
+  // Load the containers as classic scripts rather than via a dynamic import: ES modules
+  // execute in strict mode, which can break Launch custom-code actions and extensions
+  // relying on sloppy-mode semantics (implicit globals, `this` being the window, …)
+  return Promise.all(launchUrls.map((url) => new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`Could not load launch container: ${url}`));
+    document.head.appendChild(script);
+  })))
     .catch((err) => handleRejectedPromise(err instanceof Error ? err : new Error(err)));
 }
