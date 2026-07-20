@@ -5,11 +5,12 @@
   "scripts": {
     "lint": "eslint src",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "update:vendor": "node ./scripts/update-vendor.mjs"
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/adobe/aem-martech.git"
+    "url": "git+ssh://git@github.com/adobe-rnd/aem-martech.git"
   },
   "author": "Adobe Inc.",
   "license": "Apache-2.0",
@@ -25,9 +26,9 @@
     "launch"
   ],
   "bugs": {
-    "url": "https://github.com/adobe/aem-martech/issues"
+    "url": "https://github.com/adobe-rnd/aem-martech/issues"
   },
-  "homepage": "https://github.com/adobe/aem-martech#readme",
+  "homepage": "https://github.com/adobe-rnd/aem-martech#readme",
   "devDependencies": {
     "@babel/eslint-parser": "7.22.15",
     "eslint": "8.48.0",
