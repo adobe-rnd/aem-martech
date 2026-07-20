@@ -120,6 +120,8 @@ describe('performance-optimized personalization', () => {
     };
     const { initMartech, martechEager } = await importMartech();
     await initMartech(TEST_WEBSDK_CONFIG, { trackPageView: false });
+    // A decorated block is needed for the proposition to actually render (and be reported)
+    document.body.innerHTML = '<main><div data-block-status="loaded"></div></main>';
     await martechEager();
     await flushAsync();
     expect(pageViewCalls().length).toBe(0);

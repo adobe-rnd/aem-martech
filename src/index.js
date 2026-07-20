@@ -217,6 +217,7 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
 /**
  * Runs the specified function on every decorated block/section
  * @param {Function} fn The function to call
+ * @returns {Function} a function to stop watching for new decorated blocks/sections
  */
 function onDecoratedElement(fn) {
   // Apply propositions to all already decorated blocks/sections
@@ -231,16 +232,19 @@ function onDecoratedElement(fn) {
       fn();
     }
   });
-  // Watch sections and blocks being decorated async
-  observer.observe(document.querySelector('main'), {
-    subtree: true,
-    attributes: true,
-    attributeFilter: ['data-block-status', 'data-section-status'],
-  });
+  // Watch sections and blocks being decorated async (pages without a `main`, like error
+  // pages, are still watched via the body observer below)
+  const main = document.querySelector('main');
+  if (main) {
+    observer.observe(main, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-block-status', 'data-section-status'],
+    });
+  }
   // Watch anything else added to the body
-  document.querySelectorAll('body').forEach((el) => {
-    observer.observe(el, { childList: true });
-  });
+  observer.observe(document.body, { childList: true });
+  return () => observer.disconnect();
 }
 
 /**
@@ -385,6 +389,52 @@ export async function updateUserConsent(consent) {
 }
 
 let response;
+// Tracks which of the fetched propositions are dom-actions, which of those were effectively
+// rendered, and which were already reported as displayed to the backend
+let domActionPropositionIds = new Set();
+const renderedPropositionIds = new Set();
+const reportedPropositionIds = new Set();
+let initialDisplayReported = false;
+let personalizationTimedOut = false;
+
+/**
+ * Reports the specified propositions as displayed to the backend.
+ * @param {Object[]} propositions the propositions that were displayed
+ * @returns a promise that the display event was sent
+ */
+function reportDisplayedPropositions(propositions) {
+  return sendAnalyticsEvent({
+    eventType: 'decisioning.propositionDisplay',
+    _experience: {
+      decisioning: {
+        propositions,
+        propositionEventType: { display: 1 },
+      },
+    },
+  });
+}
+
+/**
+ * Reports propositions that were rendered after the initial display report was already sent
+ * (i.e. on blocks that were decorated late), so their displays are not lost.
+ * @param {String[]} propositionIds the ids of the newly rendered propositions
+ */
+function reportLateDisplayedPropositions(propositionIds) {
+  if (!initialDisplayReported) {
+    // The initial report has not been sent yet, and will include those propositions
+    return;
+  }
+  const newlyDisplayed = (response?.propositions || [])
+    .filter((p) => propositionIds.includes(p.id) && !reportedPropositionIds.has(p.id))
+    .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+  if (!newlyDisplayed.length) {
+    return;
+  }
+  newlyDisplayed.forEach((p) => reportedPropositionIds.add(p.id));
+  onPageActivation(() => {
+    reportDisplayedPropositions(newlyDisplayed);
+  });
+}
 
 /**
  * Fetching propositions from the backend and applying the propositions as the AEM EDS page loads
@@ -409,24 +459,58 @@ async function applyPropositions(instanceName) {
   if (!renderDecisionResponse?.propositions) {
     return [];
   }
+  if (personalizationTimedOut) {
+    // The response came back after the personalization timeout: the page is already showing
+    // the default content, so do not apply the propositions anymore to avoid flickering
+    return renderDecisionResponse;
+  }
   let propositions = window.structuredClone(renderDecisionResponse.propositions)
     .filter((p) => p.items.some(
       (i) => i.schema === 'https://ns.adobe.com/personalization/dom-action',
     ));
-  onDecoratedElement(async () => {
-    if (!propositions.length) {
+  domActionPropositionIds = new Set(propositions.map((p) => p.id));
+  let disconnect;
+  let isApplying = false;
+  let pendingRun = false;
+  const run = async () => {
+    if (!propositions.length || personalizationTimedOut) {
+      disconnect?.();
       return;
     }
-    const appliedPropositions = await window[instanceName](
-      'applyPropositions',
-      { propositions },
-    );
-    appliedPropositions.propositions.forEach((item) => {
-      if (item.renderAttempted) {
-        propositions = propositions.filter((p) => p.id !== item.id);
+    // Serialize the applications, so concurrent DOM updates do not apply the same
+    // propositions twice; a trailing run picks up whatever was decorated in the meantime
+    if (isApplying) {
+      pendingRun = true;
+      return;
+    }
+    isApplying = true;
+    try {
+      const appliedPropositions = await window[instanceName](
+        'applyPropositions',
+        { propositions },
+      );
+      const newlyRendered = [];
+      appliedPropositions.propositions.forEach((item) => {
+        if (item.renderAttempted) {
+          renderedPropositionIds.add(item.id);
+          newlyRendered.push(item.id);
+          propositions = propositions.filter((p) => p.id !== item.id);
+        }
+      });
+      reportLateDisplayedPropositions(newlyRendered);
+      if (!propositions.length) {
+        // Everything was applied, no need to keep watching the DOM
+        disconnect?.();
       }
-    });
-  });
+    } finally {
+      isApplying = false;
+      if (pendingRun) {
+        pendingRun = false;
+        run();
+      }
+    }
+  };
+  disconnect = onDecoratedElement(run);
   return renderDecisionResponse;
 }
 
@@ -599,6 +683,9 @@ export async function martechEager() {
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
     ).catch(() => {
+      // Stop applying propositions that arrive after the timeout: the default content is
+      // already showing and applying them late would flicker the page
+      personalizationTimedOut = true;
       if (alloyConfig.debugEnabled) {
         // eslint-disable-next-line no-console
         console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
@@ -607,9 +694,14 @@ export async function martechEager() {
       // Track the page view (and report displayed propositions) even if the personalization
       // fetch timed out or returned no propositions, so analytics are not lost
       onPageActivation(() => {
-        const propositions = response?.propositions
-          ?.map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
-        if (!config.trackPageView && !propositions?.length) {
+        // Only report propositions that were effectively rendered, or that are not
+        // dom-actions (and are handled by project code instead)
+        const propositions = (response?.propositions || [])
+          .filter((p) => !domActionPropositionIds.has(p.id) || renderedPropositionIds.has(p.id))
+          .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+        propositions.forEach((p) => reportedPropositionIds.add(p.id));
+        initialDisplayReported = true;
+        if (!config.trackPageView && !propositions.length) {
           // Without propositions there is nothing to report, and the page view itself
           // is tracked elsewhere
           return;
@@ -618,7 +710,7 @@ export async function martechEager() {
           eventType: config.trackPageView
             ? 'web.webpagedetails.pageViews'
             : 'decisioning.propositionDisplay',
-          ...(propositions?.length && {
+          ...(propositions.length && {
             _experience: {
               decisioning: {
                 propositions,
