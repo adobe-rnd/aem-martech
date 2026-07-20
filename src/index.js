@@ -683,9 +683,12 @@ export async function martechEager() {
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
     ).catch(() => {
+<<<<<<< HEAD
       // Stop applying propositions that arrive after the timeout: the default content is
       // already showing and applying them late would flicker the page
       personalizationTimedOut = true;
+=======
+>>>>>>> origin/main
       if (alloyConfig.debugEnabled) {
         // eslint-disable-next-line no-console
         console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
@@ -694,6 +697,7 @@ export async function martechEager() {
       // Track the page view (and report displayed propositions) even if the personalization
       // fetch timed out or returned no propositions, so analytics are not lost
       onPageActivation(() => {
+<<<<<<< HEAD
         // Only report propositions that were effectively rendered, or that are not
         // dom-actions (and are handled by project code instead)
         const propositions = (response?.propositions || [])
@@ -702,6 +706,11 @@ export async function martechEager() {
         propositions.forEach((p) => reportedPropositionIds.add(p.id));
         initialDisplayReported = true;
         if (!config.trackPageView && !propositions.length) {
+=======
+        const propositions = response?.propositions
+          ?.map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+        if (!config.trackPageView && !propositions?.length) {
+>>>>>>> origin/main
           // Without propositions there is nothing to report, and the page view itself
           // is tracked elsewhere
           return;
@@ -710,7 +719,11 @@ export async function martechEager() {
           eventType: config.trackPageView
             ? 'web.webpagedetails.pageViews'
             : 'decisioning.propositionDisplay',
+<<<<<<< HEAD
           ...(propositions.length && {
+=======
+          ...(propositions?.length && {
+>>>>>>> origin/main
             _experience: {
               decisioning: {
                 propositions,
