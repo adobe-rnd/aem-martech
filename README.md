@@ -1,6 +1,4 @@
-:construction: This is an early access technology and is still heavily in development. Reach out to us over Slack before using it.
-
-# AEM Edge Delivery Services Marketing Technology
+![aem-martech](./aem-martech.jpg)
 
 The AEM Marketing Technology plugin helps you quickly set up a complete MarTech stack for your AEM project. It is currently available to customers in collaboration with AEM Engineering via co-innovation VIP Projects. To implement your use cases, please reach out to the AEM Engineering team in the Slack channel dedicated to your project.
 
@@ -32,6 +30,7 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
   - [Consent Management](#consent-management)
       - [Integrating with AEM Consent Banner Block](#integrating-with-aem-consent-banner-block)
       - [Integrating with OneTrust](#integrating-with-onetrust)
+      - [Integrating with Cookiebot](#integrating-with-cookiebot)
   - [Working with Form-Based Activities](#working-with-form-based-activities)
   - [Working with Dynamic Content (SPAs)](#working-with-dynamic-content-spas)
   - [FAQ](#faq)
@@ -266,7 +265,7 @@ Initializes the library. This should be called once in `loadEager`.
 ---
 
 ### `updateUserConsent(consent)`
-Sets user consent based on the IAB TCF 2.0 standard.
+Sets user consent using the [Adobe standard v2.0](https://experienceleague.adobe.com/en/docs/experience-platform/landing/governance-privacy-security/consent/adobe/dataset) format. If you use a CMP based on IAB TCF 2.0, map its categories to the `collect`/`marketing`/`personalize`/`share` flags as shown in the [Consent Management](#consent-management) examples.
 
 - **`consent`** `{Object}`: An object detailing user consent choices (`collect`, `marketing`, `personalize`, `share`).
 
@@ -347,6 +346,30 @@ function consentEventHandler(ev) {
  updateUserConsent({ collect, personalize, share });
 }
 window.addEventListener('consent.onetrust', consentEventHandler);
+```
+
+#### Integrating with Cookiebot
+Example for [Cookiebot](https://www.cookiebot.com):
+```js
+function setupCookiebotConsent() {
+  function handleCookiebotConsent() {
+    const preferences = window.Cookiebot?.consent?.preferences || false;
+    const statistics = window.Cookiebot?.consent?.statistics || false;
+    const marketing = window.Cookiebot?.consent?.marketing || false;
+    
+    updateUserConsent({
+      collect: statistics,        // Statistics cookies
+      marketing: marketing,       // Marketing cookies
+      personalize: preferences,   // Preference cookies
+      share: marketing           // Marketing cookies
+    });
+  }
+
+  window.addEventListener('CookiebotOnConsentReady', handleCookiebotConsent);
+  window.addEventListener('CookiebotOnAccept', handleCookiebotConsent);
+}
+
+setupCookiebotConsent();
 ```
 
 ## Working with Form-Based Activities
@@ -470,8 +493,15 @@ SDK initialization and configuration live in your project's code rather than the
 ## Dependencies
 
 This plugin includes the following core libraries:
-- **Adobe Experience Platform WebSDK**: `v2.28.0` (`alloy.min.js`)
-- **Adobe Client Data Layer**: `v2.0.2` (`acdl.min.js`)
+- **Adobe Experience Platform WebSDK**: `v2.31.1` (`alloy.min.js`)
+- **Adobe Client Data Layer**: `v3.0.1` (`acdl.min.js`)
+
+To update the vendored copies from Adobe's official distribution channels (the WebSDK
+self-hosting CDN and the ACDL npm package), and keep the version numbers above in sync, run:
+```sh
+npm run update:vendor               # latest published versions
+npm run update:vendor -- 2.31.1 3.0.1  # or specific versions
+```
 
 ## Web SDK Configuration
 

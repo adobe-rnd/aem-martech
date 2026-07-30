@@ -160,10 +160,11 @@ function promiseWithTimeout(promise, timeout = 1000) {
   let timer;
   return Promise.race([
     promise,
-    new Promise((_, reject) => { timer = setTimeout(reject, timeout); }),
-  ]).finally((result) => {
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Operation timed out after ${timeout}ms`)), timeout);
+    }),
+  ]).finally(() => {
     clearTimeout(timer);
-    return result;
   });
 }
 
@@ -173,10 +174,26 @@ function promiseWithTimeout(promise, timeout = 1000) {
  * @throws a decorated error that can be intercepted by RUM handlers.
  */
 function handleRejectedPromise(error) {
-  const [, file, line] = error.stack.split('\n')[1].trim().split(' ')[1].match(/(.*):(\d+):(\d+)/);
-  error.sourceURL = file;
-  error.line = line;
+  try {
+    const [, file, line] = error.stack.split('\n')[1].trim().split(' ')[1].match(/(.*):(\d+):(\d+)/);
+    error.sourceURL = file;
+    error.line = line;
+  } catch (err) {
+    // Stack trace formats vary across browsers and the stack may not even be present,
+    // so never fail while just decorating the error
+  }
   throw error;
+}
+
+/**
+ * Ensures the library has been initialized, and throws an explicit error otherwise.
+ * @param {String} method The name of the public method being called
+ * @throws when the library was not initialized via `initMartech` yet
+ */
+function assertInitialized(method) {
+  if (!config) {
+    throw new Error(`Martech needs to be initialized before the \`${method}\` method is called`);
+  }
 }
 
 /**
@@ -192,12 +209,23 @@ function initAlloyQueue(instanceName) {
   }
   // eslint-disable-next-line no-underscore-dangle
   (window.__alloyNS ||= []).push(instanceName);
-  window[instanceName] = (...args) => new Promise((resolve, reject) => {
+  const stub = (...args) => new Promise((resolve, reject) => {
+    // Unlike the official base code, the push is deferred with a setTimeout: it breaks a
+    // spike of commands (typically the data preparation projects do before the LCP) into
+    // separate tasks so they do not pile up into one long blocking task during page load
     window.setTimeout(() => {
-      window[instanceName].q.push([resolve, reject, args]);
+      const instance = window[instanceName];
+      if (instance !== stub) {
+        // The real SDK replaced the stub (and drained its queue) while the push was
+        // pending, so forward the command to it directly or it would be lost
+        instance(...args).then(resolve, reject);
+      } else {
+        stub.q.push([resolve, reject, args]);
+      }
     });
   });
-  window[instanceName].q = [];
+  stub.q = [];
+  window[instanceName] = stub;
 }
 
 /**
@@ -208,9 +236,12 @@ function initAlloyQueue(instanceName) {
  * @param {String} instanceName The name of the instance in the blobal scope
  */
 function initDatalayer(instanceName) {
-  window[instanceName] ||= [];
+  // ACDL only ever processes the `adobeDataLayer` array, so always initialize it, and alias
+  // custom instance names to the same array so events pushed before the library is loaded
+  // are picked up when it initializes
+  window.adobeDataLayer ||= [];
   if (instanceName !== 'adobeDataLayer') {
-    window[instanceName] ||= [];
+    window[instanceName] ||= window.adobeDataLayer;
   }
 }
 
@@ -237,8 +268,7 @@ function getDefaultAlloyConfiguration() {
  * @returns {Promise<*>} a promise that the event was sent
  */
 export async function sendEvent(payload) {
-  // eslint-disable-next-line no-console
-  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendEvent` method is called');
+  assertInitialized('sendEvent');
   return window[config.alloyInstanceName]('sendEvent', payload);
 }
 
@@ -250,20 +280,23 @@ export async function sendEvent(payload) {
  * @returns {Promise<*>} a promise that the event was sent
  */
 export async function sendAnalyticsEvent(xdmData, dataMapping = {}, configOverrides = {}) {
-  // eslint-disable-next-line no-console
-  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `sendAnalyticsEvent` method is called');
+  assertInitialized('sendAnalyticsEvent');
   // eslint-disable-next-line no-console
   console.assert(config.analytics, 'Analytics tracking is disabled in the martech config');
+  if (!config.analytics) {
+    return Promise.resolve();
+  }
   try {
-    return sendEvent({
+    // Await here so rejections are actually caught by this block and decorated;
+    // returning the pending promise would bypass the catch entirely
+    return await sendEvent({
       documentUnloading: true,
       xdm: xdmData,
       data: dataMapping,
       edgeConfigOverrides: configOverrides,
     });
   } catch (err) {
-    handleRejectedPromise(new Error(err));
-    return Promise.reject(new Error(err));
+    return handleRejectedPromise(err instanceof Error ? err : new Error(err));
   }
 }
 
@@ -283,7 +316,7 @@ async function loadAndConfigureAlloy(instanceName, webSDKConfig) {
     pendingAlloyCommands.forEach((fn) => fn());
     pendingDatalayerEvents.forEach((args) => sendAnalyticsEvent(...args));
   } catch (err) {
-    handleRejectedPromise(new Error(err));
+    handleRejectedPromise(err instanceof Error ? err : new Error(err));
   }
 }
 
@@ -325,8 +358,10 @@ function onDecoratedElement(fn) {
  * @param {Object} payload the data to push
  */
 export function pushToDataLayer(payload) {
-  // eslint-disable-next-line no-console
-  console.assert(config.dataLayerInstanceName && window[config.dataLayerInstanceName], 'Martech needs to be initialized before the `pushToDataLayer` method is called');
+  assertInitialized('pushToDataLayer');
+  if (!config.dataLayer || !window[config.dataLayerInstanceName]) {
+    throw new Error('The data layer is disabled in the martech config');
+  }
   window[config.dataLayerInstanceName].push(payload);
 }
 
@@ -357,19 +392,21 @@ async function loadAndConfigureDataLayer() {
     }
     window[config.dataLayerInstanceName].push((dl) => {
       dl.addEventListener('adobeDataLayer:event', (payload) => {
-        const eventType = payload.event;
-        const args = [
-          { eventType, ...payload.xdm },
-          payload.data,
-          payload.configOverrides,
-        ];
-
         // Check whether the event should be processed or not
         if (!config.shouldProcessEvent(payload)) {
           return;
         }
 
-        delete payload.event;
+        // Do not mutate the payload: it is the data layer's own state object and other
+        // listeners may rely on it
+        const {
+          event: eventType, xdm, data, configOverrides,
+        } = payload;
+        const args = [
+          { eventType, ...xdm },
+          data,
+          configOverrides,
+        ];
 
         if (!isAlloyConfigured) {
           pendingDatalayerEvents.push(args);
@@ -387,7 +424,11 @@ async function loadAndConfigureDataLayer() {
       data = {};
     }
     if (!el.id) {
-      const index = [...document.querySelectorAll(`.${el.classList[0]}`)].indexOf(el);
+      const blockClass = el.classList[0];
+      const siblings = blockClass
+        ? [...document.querySelectorAll(`.${blockClass}`)]
+        : [...document.querySelectorAll('[data-block-data-layer]')].filter((e) => !e.classList.length);
+      const index = siblings.indexOf(el);
       el.id = `${data.parentId ? `${data.parentId}-` : ''}${index + 1}`;
     }
     window[config.dataLayerInstanceName].push({
@@ -401,21 +442,21 @@ async function loadAndConfigureDataLayer() {
  * Documentation:
  * https://experienceleague.adobe.com/en/docs/experience-platform/landing/governance-privacy-security/consent/adobe/dataset#structure
  * https://experienceleague.adobe.com/en/docs/experience-platform/xdm/data-types/consents
- * @param {Object} config The consent config to use
- * @param {Boolean} [config.collect] Whether data collection is allowed
- * @param {Boolean|Object} [config.marketing] Whether data can be used for marketing purposes
- * @param {String} [config.marketing.preferred] The preferred medium for marketing communication
- * @param {Boolean} [config.marketing.any] Whether any marketing channels are consented to or not
- * @param {Boolean} [config.marketing.email] Whether marketing emails are consented to or not
- * @param {Boolean} [config.marketing.push] Whether marketing push notifications are consented to
- * @param {Boolean} [config.marketing.sms] Whether marketing messages are consented to or not
- * @param {Boolean} [config.personalize] Whether data can be used for personalization purposes
- * @param {Boolean} [config.share] Whether data can be shared/sold to 3rd parties
- * @returns {Promise<*>} a promise that the consent setting shave been updated
+ * @param {Object} consent The consent config to use
+ * @param {Boolean} [consent.collect] Whether data collection is allowed
+ * @param {Boolean|Object} [consent.marketing] Whether data can be used for marketing purposes
+ * @param {String} [consent.marketing.preferred] The preferred medium for marketing communication
+ * @param {Boolean} [consent.marketing.email] Whether marketing emails are consented to or not
+ * @param {Boolean} [consent.marketing.push] Whether marketing push notifications are consented to
+ * @param {Boolean} [consent.marketing.sms] Whether marketing messages are consented to or not
+ * @param {Boolean} [consent.personalize] Whether data can be used for personalization purposes
+ * @param {Boolean} [consent.share] Whether data can be shared/sold to 3rd parties
+ * @returns {Promise<*>} a promise that the consent settings have been applied (if alloy is not
+ *                       configured yet, the promise only resolves once it is and the queued
+ *                       consent has effectively been set)
  */
 export async function updateUserConsent(consent) {
-  // eslint-disable-next-line no-console
-  console.assert(config.alloyInstanceName, 'Martech needs to be initialized before the `updateUserConsent` method is called');
+  assertInitialized('updateUserConsent');
 
   let marketingConfig;
   if (typeof consent.marketing === 'boolean') {
@@ -427,7 +468,9 @@ export async function updateUserConsent(consent) {
     marketingConfig = {
       preferred: consent.marketing.preferred || 'email',
       any: {
-        val: consent.marketing.email ? 'y' : 'n',
+        val: (consent.marketing.email || consent.marketing.push || consent.marketing.sms)
+          ? 'y'
+          : 'n',
       },
       email: {
         val: consent.marketing.email ? 'y' : 'n',
@@ -457,8 +500,9 @@ export async function updateUserConsent(consent) {
   if (isAlloyConfigured) {
     return fn();
   }
-  pendingAlloyCommands.push(fn);
-  return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    pendingAlloyCommands.push(() => fn().then(resolve, reject));
+  });
 }
 
 let response;
@@ -731,12 +775,15 @@ async function applyPropositions(instanceName) {
  * @returns a promise that the library was loaded and configured
  */
 export async function initMartech(webSDKConfig, martechConfig = {}) {
-  // eslint-disable-next-line no-console
-  console.assert(!config, 'Martech already initialized.');
-  // eslint-disable-next-line no-console
-  console.assert(webSDKConfig?.datastreamId || webSDKConfig?.edgeConfigId, 'Please set your "datastreamId" for the WebSDK config.');
-  // eslint-disable-next-line no-console
-  console.assert(webSDKConfig?.orgId, 'Please set your "orgId" for the WebSDK config.');
+  if (config) {
+    throw new Error('Martech is already initialized.');
+  }
+  if (!webSDKConfig?.datastreamId && !webSDKConfig?.edgeConfigId) {
+    throw new Error('Please set your "datastreamId" for the WebSDK config.');
+  }
+  if (!webSDKConfig?.orgId) {
+    throw new Error('Please set your "orgId" for the WebSDK config.');
+  }
 
   config = {
     ...DEFAULT_CONFIG,
@@ -758,12 +805,18 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     ...getDefaultAlloyConfiguration(),
     ...webSDKConfig,
     onBeforeEventSend: (payload) => {
-      // ACDL is initialized in the lazy phase, so fetching from the JS array as a fallback during
-      // the eager phase
-      if (config.includeDataLayerState) {
-        const dlState = window.adobeDataLayer.getState
-          ? window.adobeDataLayer.getState()
-          : window.adobeDataLayer[0];
+      // ACDL is initialized in the lazy phase, so fall back to merging the queued plain
+      // objects during the eager phase
+      if (config.dataLayer && config.includeDataLayerState) {
+        const dl = window[config.dataLayerInstanceName];
+        let dlState;
+        if (dl?.getState) {
+          dlState = dl.getState();
+        } else if (Array.isArray(dl)) {
+          dlState = dl
+            .filter((entry) => typeof entry === 'object' && entry !== null && !entry.event)
+            .reduce((state, entry) => ({ ...state, ...entry }), {});
+        }
         payload.xdm = {
           ...payload.xdm,
           ...dlState,
@@ -827,7 +880,13 @@ export function initRumTracking(sampleRUM, options = {}) {
       cb(data);
     });
   } else {
-    track = (ev, cb) => document.addEventListener('rum', (data) => {
+    track = (ev, cb) => document.addEventListener('rum', (event) => {
+      // Filter for the requested checkpoint and unwrap the custom event detail, so both
+      // code paths pass the same payload shape to the callback
+      const data = event.detail || {};
+      if (data.checkpoint !== ev) {
+        return;
+      }
       debug('rum', ev, data);
       cb(data);
     });
@@ -840,7 +899,7 @@ export function initRumTracking(sampleRUM, options = {}) {
  * @returns a `true` if personalization is enabled, or `false` otherwise
  */
 export function isPersonalizationEnabled() {
-  return config.personalization;
+  return !!config?.personalization;
 }
 
 /**
@@ -850,8 +909,10 @@ export function isPersonalizationEnabled() {
  * `applyPersonalization`.
  */
 export async function getPersonalizationForView(viewName) {
-  // eslint-disable-next-line no-console
-  console.assert(viewName, 'The `viewName` parameter needs to be defined');
+  assertInitialized('getPersonalizationForView');
+  if (!viewName) {
+    throw new Error('The `viewName` parameter needs to be defined');
+  }
   return sendEvent({
     renderDecisions: true,
     xdm: {
@@ -868,8 +929,10 @@ export async function getPersonalizationForView(viewName) {
  * @returns a promise that the propositions were applied
  */
 export async function applyPersonalization(viewName) {
-  // eslint-disable-next-line no-console
-  console.assert(viewName, 'The `viewName` parameter needs to be defined');
+  assertInitialized('applyPersonalization');
+  if (!viewName) {
+    throw new Error('The `viewName` parameter needs to be defined');
+  }
   return window[config.alloyInstanceName]('applyPropositions', { viewName });
 }
 
@@ -878,9 +941,8 @@ export async function applyPersonalization(viewName) {
  * @returns a promise that the eager logic was executed
  */
 export async function martechEager() {
+  assertInitialized('martechEager');
   if (config.personalization && config.performanceOptimized) {
-    // eslint-disable-next-line no-console
-    console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `martechEager` method is called');
     return promiseWithTimeout(
       applyPropositions(config.alloyInstanceName),
       config.personalizationTimeout,
@@ -935,25 +997,42 @@ export async function martechEager() {
  * @returns a promise that the lazy logic was executed
  */
 export async function martechLazy() {
+  assertInitialized('martechLazy');
   if (config.dataLayer) {
-    await loadAndConfigureDataLayer({});
+    await loadAndConfigureDataLayer();
   }
 
-  if (!config.personalization && config.performanceOptimized) {
-    await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+  if (!config.personalization) {
+    // Alloy is only loaded in the eager phase when personalization is enabled,
+    // so make sure it is loaded here in all other configurations
+    if (!isAlloyConfigured) {
+      await loadAndConfigureAlloy(config.alloyInstanceName, alloyConfig);
+    }
     if (config.trackPageView) {
       onPageActivation(() => {
         sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
       });
     }
   } else if (!config.performanceOptimized) {
-    const renderDecisionResponse = await sendEvent({
-      renderDecisions: true,
-      decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
-    });
-    response = renderDecisionResponse;
-    document.body.style.visibility = null;
-    // Automatically report displayed propositions
+    try {
+      const renderDecisionResponse = await promiseWithTimeout(
+        sendEvent({
+          renderDecisions: true,
+          decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
+        }),
+        config.personalizationTimeout,
+      );
+      response = renderDecisionResponse;
+    } catch (err) {
+      if (alloyConfig.debugEnabled) {
+        // eslint-disable-next-line no-console
+        console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');
+      }
+    } finally {
+      // Always restore the page visibility, even if the personalization request failed
+      // (network error, request blocked by an ad blocker, consent not given in time, …)
+      document.body.style.visibility = null;
+    }
     if (config.trackPageView) {
       onPageActivation(() => {
         sendAnalyticsEvent({ eventType: 'web.webpagedetails.pageViews' });
@@ -967,10 +1046,19 @@ export async function martechLazy() {
  * @returns a promise that the delayed logic was executed
  */
 export async function martechDelayed() {
-  // eslint-disable-next-line no-console
-  console.assert(config.alloyInstanceName && window[config.alloyInstanceName], 'Martech needs to be initialized before the `martechDelayed` method is called');
+  assertInitialized('martechDelayed');
 
   const { launchUrls } = config;
-  return Promise.all(launchUrls.map((url) => import(url)))
-    .catch((err) => handleRejectedPromise(new Error(err)));
+  // Load the containers as classic scripts rather than via a dynamic import: ES modules
+  // execute in strict mode, which can break Launch custom-code actions and extensions
+  // relying on sloppy-mode semantics (implicit globals, `this` being the window, …)
+  return Promise.all(launchUrls.map((url) => new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`Could not load launch container: ${url}`));
+    document.head.appendChild(script);
+  })))
+    .catch((err) => handleRejectedPromise(err instanceof Error ? err : new Error(err)));
 }
