@@ -699,15 +699,11 @@ async function applyPropositions(instanceName) {
       }).filter(Boolean),
     }))
     .filter((p) => p.items.length > 0);
-  // The extended schema filter (dom-action + html-content-item) feeds the display-accuracy set:
-  // only propositions handed to alloy for DOM application count as displayed once rendered.
   domActionPropositionIds = new Set(propositions.map((p) => p.id));
   let disconnect;
   let isApplying = false;
   let pendingRun = false;
   const run = async () => {
-    // Re-scan for `data-mbox` scopes decorated after the eager fetch, and warn on any that arrive
-    // too late to be personalized this load.
     const lateScopes = discoverPropositionScopes(document);
     lateScopes.forEach((scope) => {
       if (!response?.propositions?.some((p) => p.scope === scope)) {
@@ -726,8 +722,6 @@ async function applyPropositions(instanceName) {
     }
     isApplying = true;
     try {
-      // Form-Based html-content-item offers carry no selector; hand alloy the resolved
-      // selector/actionType per scope via the metadata map.
       const applyOptions = { propositions };
       if (Object.keys(htmlContentMetadata).length) {
         applyOptions.metadata = htmlContentMetadata;
