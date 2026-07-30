@@ -40,7 +40,28 @@
  *                                         (non-performance path), with `__view__` always
  *                                         included.
  *                                         (defaults to [])
+ * @property {String|null} propositionScopeAttribute The `data-*` attribute name the plugin
+ *                                          scans for to auto-discover decision scopes from
+ *                                          the DOM. Multiple scopes per element supported
+ *                                          via comma-separated values. Set to `null` to
+ *                                          disable auto-discovery. Auto-discovery only runs in
+ *                                          the performance-optimized eager path (the default);
+ *                                          when `performanceOptimized` is false, request scopes
+ *                                          explicitly via `decisionScopes`. (defaults to "mbox")
+ * @property {String} discoveredScopeActionType The default `actionType` for auto-discovered
+ *                                          scopes when neither the offer nor the section's
+ *                                          `data-mbox-action` attribute specifies one.
+ *                                          Valid values: 'setHtml', 'replaceHtml',
+ *                                          'appendHtml'. (defaults to "setHtml")
  */
+const SCHEMA_DOM_ACTION = 'https://ns.adobe.com/personalization/dom-action';
+const SCHEMA_HTML_CONTENT_ITEM = 'https://ns.adobe.com/personalization/html-content-item';
+// Selectors that target the document chrome rather than visible content. If a dom-action item
+// arrives with one of these, alloy's applyPropositions injects directly into <head>/<body>/<html>.
+const NON_VISUAL_SELECTORS = new Set(['head', 'body', 'html']);
+// Action types the plugin understands for applying an offer to its target element.
+const VALID_ACTION_TYPES = new Set(['setHtml', 'replaceHtml', 'appendHtml']);
+
 export const DEFAULT_CONFIG = {
   analytics: true,
   alloyInstanceName: 'alloy',
@@ -54,6 +75,8 @@ export const DEFAULT_CONFIG = {
   personalizationTimeout: 1000,
   shouldProcessEvent: () => true,
   decisionScopes: [],
+  propositionScopeAttribute: 'mbox',
+  discoveredScopeActionType: 'setHtml',
 };
 
 let config;
@@ -61,6 +84,56 @@ let alloyConfig;
 let isAlloyConfigured = false;
 const pendingAlloyCommands = [];
 const pendingDatalayerEvents = [];
+/** IDs of propositions that have been actually displayed (direct-inject or alloy-applied). */
+const renderedPropositionIds = new Set();
+/** IDs of propositions that have already been reported via a manual sendEvent call. */
+const reportedPropositionIds = new Set();
+/**
+ * Scope -> { selector, actionType } map for Form-Based html-content-item offers, built only by
+ * `data-mbox` auto-discovery (see discoverPropositionScopes). Internal — there is no consumer
+ * config for hand-mapping scopes to selectors; authors declare targets via section metadata.
+ */
+const discoveredScopeMeta = new Map();
+
+const debug = (label = 'martech', ...args) => {
+  if (alloyConfig?.debugEnabled) {
+    // eslint-disable-next-line no-console
+    console.debug.call(null, `[${label}]`, ...args);
+  }
+};
+
+/**
+ * Decides whether a selector is safe to hand to alloy or to a direct-injection target
+ * lookup. Rejects empty/non-string values, document-chrome selectors (head/body/html,
+ * case- and whitespace-insensitive), and syntactically-invalid CSS. Debug-logs the
+ * reason on every rejection, prefixed with the supplied context label for traceability.
+ *
+ * @param {String} rawSelector The raw selector — from `item.data.selector`, from the
+ *                              auto-discovered `data-mbox` synthetic selector, or any
+ *                              other untrusted source.
+ * @param {String} contextLabel Free-form short label like `html-content-item scope "foo"`.
+ *                              Surfaced in debug logs.
+ * @returns {Boolean} true if the selector is non-empty, visual, and parseable; false
+ *                    otherwise.
+ */
+function isVisualSelector(rawSelector, contextLabel) {
+  if (!rawSelector || typeof rawSelector !== 'string') {
+    debug('martech', `dropping ${contextLabel}: selector is empty or non-string`);
+    return false;
+  }
+  const normalized = rawSelector.trim().toLowerCase();
+  if (NON_VISUAL_SELECTORS.has(normalized)) {
+    debug('martech', `dropping ${contextLabel}: non-visual selector "${rawSelector}"`);
+    return false;
+  }
+  try {
+    document.querySelector(rawSelector);
+  } catch (err) {
+    debug('martech', `dropping ${contextLabel}: invalid CSS — "${rawSelector}" (${err.message})`);
+    return false;
+  }
+  return true;
+}
 
 /**
  * Triggers the callback when the page is actually activated,
@@ -183,7 +256,7 @@ function getDefaultAlloyConfiguration() {
   return {
     context: ['web', 'device', 'environment'],
     // enable while debugging
-    debugEnabled: hostname === 'localhost' || hostname.endsWith('.hlx.page') || hostname.endsWith('.aem.page'),
+    debugEnabled: hostname === 'localhost' || hostname.endsWith('.hlx.page') || hostname.endsWith('.aem.page') || hostname.endsWith('.aem.network'),
     // wait for exlicit consent before tracking anything
     defaultConsent: 'pending',
   };
@@ -433,13 +506,96 @@ export async function updateUserConsent(consent) {
 }
 
 let response;
-// Tracks which of the fetched propositions are dom-actions, which of those were effectively
-// rendered, and which were already reported as displayed to the backend
+// Tracks which fetched propositions are handed to alloy for DOM application (dom-action or
+// html-content-item), which of those were effectively rendered, and which were already reported
+// as displayed. renderedPropositionIds/reportedPropositionIds are declared at module top.
 let domActionPropositionIds = new Set();
-const renderedPropositionIds = new Set();
-const reportedPropositionIds = new Set();
 let initialDisplayReported = false;
 let personalizationTimedOut = false;
+
+/**
+ * Resolves the target selector and actionType for a Form-Based html-content-item.
+ * Priority: selector embedded in item data (DA "Send to Target" offers carry this automatically)
+ * > the synthetic selector auto-discovered from the section's `data-mbox` attribute.
+ * @returns {{selector: String, actionType: String}|null} null when no selector can be resolved
+ */
+function resolveHtmlContentTarget(item, scope) {
+  const embedded = item?.data?.selector;
+  const discovered = discoveredScopeMeta.get(scope);
+  const selector = embedded || discovered?.selector;
+  if (!isVisualSelector(selector, `html-content-item scope "${scope}"`)) {
+    return null;
+  }
+  const actionType = item?.data?.actionType
+    || discovered?.actionType
+    || 'setHtml';
+  return { selector, actionType };
+}
+
+// Marker class added to every element we've already processed. The :not(.martech-mbox-scanned)
+// filter on the discovery selector makes the per-tick re-scan O(new-elements), not O(all-mboxes).
+const SCANNED_MARKER = 'martech-mbox-scanned';
+
+/**
+ * Scans the DOM under `root` for elements carrying the configured proposition-scope
+ * attribute (default `data-mbox`) and registers a synthetic-class selector + actionType
+ * per scope into the internal `discoveredScopeMeta` map. Returns the discovered scope names
+ * so the caller can merge them into `config.decisionScopes`. Idempotent — elements marked
+ * with the SCANNED_MARKER class are skipped on subsequent calls.
+ *
+ * @param {Document|Element} root The DOM root to scan.
+ * @returns {String[]} Scope names discovered during this call only (not previously-scanned).
+ */
+function discoverPropositionScopes(root) {
+  if (!config.propositionScopeAttribute) return [];
+  const attr = config.propositionScopeAttribute;
+  const selector = `[data-${attr}]:not(.${SCANNED_MARKER})`;
+  const elements = root.querySelectorAll(selector);
+  const newScopes = [];
+  elements.forEach((el) => {
+    const raw = el.getAttribute(`data-${attr}`);
+    if (!raw) {
+      el.classList.add(SCANNED_MARKER);
+      return;
+    }
+    const scopes = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    const elementAction = el.getAttribute(`data-${attr}-action`);
+    let actionType;
+    if (elementAction && VALID_ACTION_TYPES.has(elementAction)) {
+      actionType = elementAction;
+    } else {
+      if (elementAction) {
+        debug('martech', `ignoring invalid data-${attr}-action="${elementAction}"; valid values: setHtml, replaceHtml, appendHtml`);
+      }
+      // Fall back to the configured default, validating it too — a bad config value shouldn't
+      // be handed to alloy as an actionType.
+      const configured = config.discoveredScopeActionType;
+      if (configured && !VALID_ACTION_TYPES.has(configured)) {
+        debug('martech', `invalid discoveredScopeActionType "${configured}"; using "setHtml"`);
+      }
+      actionType = VALID_ACTION_TYPES.has(configured) ? configured : 'setHtml';
+    }
+    scopes.forEach((scope) => {
+      const sanitized = scope.replace(/[^a-zA-Z0-9_-]/g, '-');
+      if (sanitized !== scope) {
+        debug('martech', `mbox name "${scope}" sanitized to "${sanitized}" for CSS class`);
+      }
+      const scopeSelector = `.martech-mbox-${sanitized}`;
+      // Distinct raw scopes can sanitize to the same class (e.g. "a.b" and "a-b"). Warn so a
+      // silent wrong-element application is at least discoverable in debug.
+      const collision = [...discoveredScopeMeta]
+        .find(([s, m]) => s !== scope && m.selector === scopeSelector);
+      if (collision) {
+        debug('martech', `mbox "${scope}" and "${collision[0]}" both map to ${scopeSelector}; an offer for one may target the other's element`);
+      }
+      el.classList.add(`martech-mbox-${sanitized}`);
+      discoveredScopeMeta.set(scope, { selector: scopeSelector, actionType });
+      newScopes.push(scope);
+    });
+    el.classList.add(SCANNED_MARKER);
+  });
+  return newScopes;
+}
 
 /**
  * Reports the specified propositions as displayed to the backend.
@@ -489,6 +645,14 @@ function reportLateDisplayedPropositions(propositionIds) {
  * @returns a promise that the propositions were retrieved and will be applied as the page renders
  */
 async function applyPropositions(instanceName) {
+  const discoveredScopes = discoverPropositionScopes(document);
+  if (discoveredScopes.length) {
+    debug('martech', `auto-discovered ${discoveredScopes.length} scope(s):`, discoveredScopes);
+    config.decisionScopes = [
+      ...new Set([...(config.decisionScopes || []), ...discoveredScopes]),
+    ];
+  }
+
   // Get the decisions, but don't render them automatically
   // so we can hook up into the AEM EDS page load sequence
   const renderDecisionResponse = await sendEvent({
@@ -496,7 +660,10 @@ async function applyPropositions(instanceName) {
     renderDecisions: false,
     personalization: {
       sendDisplayEvent: false,
-      ...(config.decisionScopes?.length && { decisionScopes: config.decisionScopes }),
+      // Always request `__view__` alongside any named scopes. The Web SDK treats
+      // `decisionScopes` as the exact set to fetch, so omitting `__view__` here would silently
+      // drop all VEC / page-load (view) propositions on any page that has a discovered mbox.
+      decisionScopes: [...new Set(['__view__', ...(config.decisionScopes || [])])],
     },
   });
   response = renderDecisionResponse;
@@ -508,15 +675,41 @@ async function applyPropositions(instanceName) {
     // the default content, so do not apply the propositions anymore to avoid flickering
     return renderDecisionResponse;
   }
+  // dom-action (VEC) items carry their own selector and are applied by alloy directly, exactly
+  // as upstream does. html-content-item (Form-Based) offers don't carry a selector, so resolve a
+  // target from the offer or from `data-mbox` auto-discovery and hand it to alloy via the metadata
+  // map; drop items with no resolvable selector so they aren't retried every tick.
+  const htmlContentMetadata = {};
   let propositions = window.structuredClone(renderDecisionResponse.propositions)
     .filter((p) => p.items.some(
-      (i) => i.schema === 'https://ns.adobe.com/personalization/dom-action',
-    ));
+      (i) => i.schema === SCHEMA_DOM_ACTION || i.schema === SCHEMA_HTML_CONTENT_ITEM,
+    ))
+    .map((p) => ({
+      ...p,
+      items: p.items.map((item) => {
+        if (item.schema === SCHEMA_HTML_CONTENT_ITEM) {
+          const target = resolveHtmlContentTarget(item, p.scope);
+          if (!target) {
+            debug('martech', `dropping html-content-item with no resolvable selector for scope "${p.scope}"`);
+            return null;
+          }
+          htmlContentMetadata[p.scope] = target;
+        }
+        return item;
+      }).filter(Boolean),
+    }))
+    .filter((p) => p.items.length > 0);
   domActionPropositionIds = new Set(propositions.map((p) => p.id));
   let disconnect;
   let isApplying = false;
   let pendingRun = false;
   const run = async () => {
+    const lateScopes = discoverPropositionScopes(document);
+    lateScopes.forEach((scope) => {
+      if (!response?.propositions?.some((p) => p.scope === scope)) {
+        debug('martech', `mbox "${scope}" discovered after eager propositionFetch; not personalized this load`);
+      }
+    });
     if (!propositions.length || personalizationTimedOut) {
       disconnect?.();
       return;
@@ -529,12 +722,16 @@ async function applyPropositions(instanceName) {
     }
     isApplying = true;
     try {
+      const applyOptions = { propositions };
+      if (Object.keys(htmlContentMetadata).length) {
+        applyOptions.metadata = htmlContentMetadata;
+      }
       const appliedPropositions = await window[instanceName](
         'applyPropositions',
-        { propositions },
+        applyOptions,
       );
       const newlyRendered = [];
-      appliedPropositions.propositions.forEach((item) => {
+      appliedPropositions.propositions?.forEach((item) => {
         if (item.renderAttempted) {
           renderedPropositionIds.add(item.id);
           newlyRendered.push(item.id);
@@ -587,6 +784,12 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
     ...martechConfig,
   };
 
+  renderedPropositionIds.clear();
+  reportedPropositionIds.clear();
+  discoveredScopeMeta.clear();
+  domActionPropositionIds = new Set();
+  initialDisplayReported = false;
+  personalizationTimedOut = false;
   initAlloyQueue(config.alloyInstanceName);
   if (config.dataLayer) {
     initDatalayer(config.dataLayerInstanceName);
@@ -654,13 +857,6 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
   }
   return Promise.resolve();
 }
-
-const debug = (label = 'martech', ...args) => {
-  if (alloyConfig?.debugEnabled) {
-    // eslint-disable-next-line no-console
-    console.debug.call(null, `[${label}]`, ...args);
-  }
-};
 
 export function initRumTracking(sampleRUM, options = {}) {
   // Load the RUM enhancer so we can map all RUM events even on non-sampled pages
