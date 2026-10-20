@@ -218,8 +218,9 @@ export async function sendEvent(payload) {
  * @param {String} [options.pageURL=window.location.href] the complete current page URL
  * @param {String} [instanceName] the WebSDK instance (defaults to config.alloyInstanceName)
  * @returns {Promise<{propositions: Object[], display: Function}>} the original propositions and
- * a bound display(proposition) callback; call only after visible application. Each identity is
- * attempted once per result, even on failure. Display waits for page activation and the SDK send.
+ * a bound display(proposition) callback; call only after visible application. Each captured
+ * (id, scope) pair is attempted once per result, even on failure. Display waits for page activation
+ * and the SDK send.
  */
 export async function fetchPropositions({
   decisionScopes,
@@ -286,7 +287,8 @@ export async function fetchPropositions({
       throw new Error('Proposition was not returned by this fetch.');
     }
     const original = metadata.get(proposition);
-    if (!attempts.has(original.id)) {
+    const identity = JSON.stringify([original.id, original.scope]);
+    if (!attempts.has(identity)) {
       // Cache before sending, including failed attempts, to deduplicate concurrent callbacks.
       const attempt = Promise.resolve().then(() => new Promise((resolve, reject) => {
         onPageActivation(() => {
@@ -305,9 +307,9 @@ export async function fetchPropositions({
           }, instanceName).then(resolve, reject);
         });
       })).catch(() => handleRejectedPromise(new Error('Could not report proposition display.')));
-      attempts.set(original.id, attempt);
+      attempts.set(identity, attempt);
     }
-    return attempts.get(original.id);
+    return attempts.get(identity);
   };
   return { propositions: result.propositions, display };
 }

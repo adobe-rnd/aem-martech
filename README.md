@@ -312,8 +312,10 @@ items, applies content, observes visibility or imposes a rendering timeout.
   result **only after successful, visible application**. Clones, decoded payloads
   and objects from other results are rejected. The callback snapshots original
   `id`, `scope` and `scopeDetails` before project code can modify them. It attempts
-  each proposition ID once per result, including concurrent calls and failed sends;
-  repeated calls await the same attempt, without retrying. Display is deferred
+  each captured `(id, scope)` pair once per result, including concurrent calls and
+  failed sends. Distinct scopes remain independent even when their IDs match;
+  duplicate original objects with the same captured pair share the first attempted
+  report. Repeated calls await the same attempt, without retrying. Display is deferred
   during speculative prerendering and resolves after the SDK send completes.
 
 Both requests disable automatic rendering and display reporting. Explicit display

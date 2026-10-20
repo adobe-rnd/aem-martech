@@ -214,6 +214,54 @@ describe('explicit bound display (AC3)', () => {
     expect(displays()).toHaveLength(1);
   });
 
+  it('reports the same ID independently per original scope and rejects foreign objects', async () => {
+    const first = proposition('shared');
+    const second = {
+      ...proposition('shared'),
+      scope: 'region-two',
+      scopeDetails: { decisionProvider: 'TGT', activity: { id: 'activity-two' } },
+    };
+    const expected = [first, second].map((p) => window.structuredClone({
+      id: p.id, scope: p.scope, scopeDetails: p.scopeDetails,
+    }));
+    const { fetchPropositions } = await setup([first, second]);
+    const { display } = await fetchPropositions(options);
+    await expect(display(window.structuredClone(first)))
+      .rejects.toThrow('Proposition was not returned by this fetch.');
+    // Dedupe must use captured scopes, not the project's mutable returned objects.
+    first.scope = second.scope;
+    first.scopeDetails.activity.id = 'changed';
+    await Promise.all([display(first), display(second), display(first), display(second)]);
+    await Promise.all([display(first), display(second)]);
+    expect(displays()).toHaveLength(2);
+    expect(displays().map((c) => c.options.xdm._experience.decisioning.propositions[0]))
+      .toEqual(expected);
+  });
+
+  it('caches a failed attempt without blocking the same ID in another scope', async () => {
+    const first = proposition('shared');
+    const second = {
+      ...proposition('shared'),
+      scope: 'region-two',
+      scopeDetails: { decisionProvider: 'TGT', activity: { id: 'activity-two' } },
+    };
+    const { fetchPropositions } = await setup([first, second]);
+    const { display } = await fetchPropositions(options);
+    window.__alloyMockHandlers.sendEvent = (request) => {
+      if (request.xdm._experience.decisioning.propositions[0].scope === first.scope) {
+        throw new Error('private SDK failure');
+      }
+      return {};
+    };
+    await expect(display(first)).rejects.toThrow('Could not report proposition display.');
+    await display(second);
+    await expect(display(first)).rejects.toThrow('Could not report proposition display.');
+    await display(second);
+    expect(displays()).toHaveLength(2);
+    expect(displays().map((c) => c.options.xdm._experience.decisioning.propositions[0].scope))
+      .toEqual(['region-one', 'region-two']);
+  });
+
   it('leaves unapplied, failed or timed-out regions unreported while another region can display', async () => {
     vi.useFakeTimers();
     const { fetchPropositions } = await setup([proposition('failed'), proposition('late')]);
