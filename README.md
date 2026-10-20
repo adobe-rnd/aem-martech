@@ -24,6 +24,7 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
     - [`pushToDataLayer(payload)`](#pushtodatalayerpayload)
     - [`pushEventToDataLayer(event, xdm, data, configOverrides)`](#pusheventtodatalayerevent-xdm-data-configoverrides)
     - [`sendEvent(payload)`](#sendeventpayload)
+    - [`fetchPropositions(options, instanceName)`](#fetchpropositionsoptions-instancename)
     - [`sendAnalyticsEvent(xdmData, dataMapping, configOverrides)`](#sendanalyticseventxdmdata-datamapping-configoverrides)
     - [`initRumTracking(sampleRUM, options)`](#initrumtrackingsamplerum-options)
     - [`isPersonalizationEnabled()`](#ispersonalizationenabled)
@@ -287,6 +288,69 @@ A helper for pushing a standardized event to the data layer.
 A proxy for the `alloy('sendEvent', ...)` command to send a raw event.
 
 - **`payload`** `{Object}`: The full event payload for the WebSDK.
+
+---
+
+### `fetchPropositions(options, instanceName)`
+Fetches opaque propositions for **project-owned rendering**, returning
+`{ propositions, display }`. Initialize the SDK and apply the site's consent
+decision first. This helper neither grants consent nor interprets proposition
+items, applies content, observes visibility or imposes a rendering timeout.
+
+- **`options.decisionScopes`** `{String[]}`: Required non-empty array of named
+  scopes. Sent exactly as supplied; no `__view__` scope is added.
+- **`options.defaultPersonalizationEnabled`** `{Boolean}`: Defaults to `false`,
+  disabling default/VEC decisions. Pass `true` only when intentionally requesting them.
+- **`options.pageURL`** `{String}`: Complete current page URL, including query
+  parameters. Defaults to `window.location.href`; sent as `xdm.web.webPageDetails.URL`.
+- **`instanceName`** `{String}`: Optional existing WebSDK instance name; defaults
+  to the configured `alloyInstanceName`. Fetch and display use the same instance.
+- **`propositions`** `{Object[]}`: The original SDK objects, not decoded payloads.
+  An explicit empty array is valid. SDK failures and malformed responses reject
+  with static errors instead of returning an empty success.
+- **`display(proposition)`** `{Function}`: Call with an original object from this
+  result **only after successful, visible application**. Clones, decoded payloads
+  and objects from other results are rejected. The callback snapshots original
+  `id`, `scope` and `scopeDetails` before project code can modify them. It attempts
+  each proposition ID once per result, including concurrent calls and failed sends;
+  repeated calls await the same attempt, without retrying. Display is deferred
+  during speculative prerendering and resolves after the SDK send completes.
+
+Both requests disable automatic rendering and display reporting. Explicit display
+uses personalization transport even with `analytics: false`, without a page-view
+event or a new decision request. Project failures, unsupported content and expired
+rendering deadlines must leave `display` uncalled. The helper cannot verify that
+content is actually visible.
+
+```js
+await initMartech(webSDKConfig, {
+  personalization: true,
+  analytics: false,
+  dataLayer: false,
+  trackPageView: false,
+});
+await updateUserConsent(siteConsent); // Determined by the site's consent policy.
+
+const { propositions, display } = await fetchPropositions({
+  decisionScopes: ['my-region'],
+  defaultPersonalizationEnabled: false,
+  pageURL: window.location.href,
+});
+
+// Project-defined validation, application and visibility checks:
+await Promise.all(propositions.map(async (proposition) => {
+  if (await applyProjectContentAndWaitUntilVisible(proposition)) {
+    await display(proposition);
+  }
+}));
+```
+
+For a manual-only page, use this sequence **instead of `martechEager`**, not in
+addition to it. The existing automatic eager/lazy DOM lifecycle is unchanged:
+calling it still makes its own decisions and reports them under its existing
+rules. Keep the default `performanceOptimized: true` if using `martechLazy`
+without its non-performance automatic decision request. Rendering deadlines and
+independent later regions remain the project's responsibility.
 
 ---
 

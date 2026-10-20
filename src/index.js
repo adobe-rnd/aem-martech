@@ -190,13 +190,126 @@ function getDefaultAlloyConfiguration() {
 }
 
 /**
+ * Sends an event through an existing WebSDK instance.
+ * @param {Object} payload the payload to send
+ * @param {String} instanceName the configured WebSDK instance name
+ * @returns {Promise<*>} a promise that the event was sent
+ */
+async function sendSDKEvent(payload, instanceName) {
+  return window[instanceName]('sendEvent', payload);
+}
+
+/**
  * Just a proxy method for the `alloy('sendEvent', …)` method
  * @param {Object} payload the payload to send
  * @returns {Promise<*>} a promise that the event was sent
  */
 export async function sendEvent(payload) {
   assertInitialized('sendEvent');
-  return window[config.alloyInstanceName]('sendEvent', payload);
+  return sendSDKEvent(payload, config.alloyInstanceName);
+}
+
+/**
+ * Fetches opaque propositions for project-owned rendering, without applying or reporting them.
+ * Initialize the SDK and update site-policy consent before calling this method.
+ * @param {Object} options the manual decision request
+ * @param {String[]} options.decisionScopes the explicit decision scopes to fetch
+ * @param {Boolean} [options.defaultPersonalizationEnabled=false] whether to fetch default decisions
+ * @param {String} [options.pageURL=window.location.href] the complete current page URL
+ * @param {String} [instanceName] the WebSDK instance (defaults to config.alloyInstanceName)
+ * @returns {Promise<{propositions: Object[], display: Function}>} the original propositions and
+ * a bound display(proposition) callback; call only after visible application. Each identity is
+ * attempted once per result, even on failure. Display waits for page activation and the SDK send.
+ */
+export async function fetchPropositions({
+  decisionScopes,
+  defaultPersonalizationEnabled = false,
+  pageURL = window.location.href,
+} = {}, instanceName = config?.alloyInstanceName) {
+  assertInitialized('fetchPropositions');
+  if (!config.personalization) {
+    throw new Error('Personalization is disabled in the martech config.');
+  }
+  if (!Array.isArray(decisionScopes) || !decisionScopes.length
+    || decisionScopes.some((scope) => typeof scope !== 'string' || !scope.trim())) {
+    throw new Error('The `decisionScopes` parameter must be a non-empty array of scope strings.');
+  }
+  if (typeof defaultPersonalizationEnabled !== 'boolean'
+    || typeof pageURL !== 'string' || !pageURL.trim()) {
+    throw new Error('Invalid manual proposition request options.');
+  }
+  if (typeof window[instanceName] !== 'function') {
+    throw new Error('The WebSDK instance is not available.');
+  }
+
+  let result;
+  try {
+    result = await sendSDKEvent({
+      type: 'decisioning.propositionFetch',
+      renderDecisions: false,
+      personalization: {
+        decisionScopes,
+        defaultPersonalizationEnabled,
+        sendDisplayEvent: false,
+      },
+      xdm: { web: { webPageDetails: { URL: pageURL } } },
+    }, instanceName);
+  } catch (err) {
+    // SDK errors can contain request data. Expose only a static, RUM-decorated error.
+    return handleRejectedPromise(new Error('Could not fetch propositions.'));
+  }
+
+  const metadata = new Map();
+  try {
+    if (!Array.isArray(result?.propositions)) {
+      throw new Error();
+    }
+    result.propositions.forEach((p) => {
+      if (!p || typeof p.id !== 'string' || !p.id
+        || typeof p.scope !== 'string' || !p.scope
+        || !p.scopeDetails || typeof p.scopeDetails !== 'object' || Array.isArray(p.scopeDetails)) {
+        throw new Error();
+      }
+      // Keep the original objects public, but snapshot reporting metadata before project code
+      // decodes or mutates them. Object membership also rejects clones and foreign fetch results.
+      metadata.set(p, window.structuredClone({
+        id: p.id, scope: p.scope, scopeDetails: p.scopeDetails,
+      }));
+    });
+  } catch (err) {
+    return handleRejectedPromise(new Error('Invalid proposition response.'));
+  }
+
+  const attempts = new Map();
+  const display = async (proposition) => {
+    if (!metadata.has(proposition)) {
+      throw new Error('Proposition was not returned by this fetch.');
+    }
+    const original = metadata.get(proposition);
+    if (!attempts.has(original.id)) {
+      // Cache before sending, including failed attempts, to deduplicate concurrent callbacks.
+      const attempt = Promise.resolve().then(() => new Promise((resolve, reject) => {
+        onPageActivation(() => {
+          sendSDKEvent({
+            renderDecisions: false,
+            personalization: { sendDisplayEvent: false, defaultPersonalizationEnabled: false },
+            xdm: {
+              eventType: 'decisioning.propositionDisplay',
+              _experience: {
+                decisioning: {
+                  propositions: [original],
+                  propositionEventType: { display: 1 },
+                },
+              },
+            },
+          }, instanceName).then(resolve, reject);
+        });
+      })).catch(() => handleRejectedPromise(new Error('Could not report proposition display.')));
+      attempts.set(original.id, attempt);
+    }
+    return attempts.get(original.id);
+  };
+  return { propositions: result.propositions, display };
 }
 
 /**
