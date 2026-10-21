@@ -361,3 +361,51 @@ describe('automatic lifecycle isolation (AC1, AC3)', () => {
     expect(displays()).toHaveLength(1);
   });
 });
+
+describe('shared proposition protocol with distinct caller policies', () => {
+  beforeEach(() => resetBrowserState());
+
+  it('keeps automatic fetch defaults separate from an explicit manual request', async () => {
+    const { fetchPropositions, martechEager } = await setup([]);
+    await martechEager();
+    await fetchPropositions(options);
+    const requests = alloyCalls('sendEvent')
+      .filter((call) => call.options.type === 'decisioning.propositionFetch');
+    expect(requests).toHaveLength(2);
+    requests.forEach(({ options: request }) => {
+      expect(request.renderDecisions).toBe(false);
+      expect(request.personalization.sendDisplayEvent).toBe(false);
+    });
+    expect(requests[0].options.personalization.defaultPersonalizationEnabled).toBeUndefined();
+    expect(requests[0].options.xdm?.web).toBeUndefined();
+    expect(requests[1].options.personalization.defaultPersonalizationEnabled).toBe(false);
+    expect(requests[1].options.xdm.web.webPageDetails.URL).toBe(options.pageURL);
+  });
+
+  it.each([true, false])('uses the same display XDM while automatic analytics=%s', async (analytics) => {
+    const original = proposition('shared-protocol', 'https://ns.adobe.com/personalization/dom-action');
+    const martech = await setup([original], { analytics, trackPageView: false });
+    window.__alloyMockHandlers.applyPropositions = () => ({
+      propositions: [{ id: original.id, renderAttempted: true }],
+    });
+    document.body.innerHTML = '<main><div data-block-status="loaded"></div></main>';
+    await martech.martechEager();
+    await flushAsync();
+    const automaticDisplays = displays();
+    expect(automaticDisplays).toHaveLength(analytics ? 1 : 0);
+
+    const result = await martech.fetchPropositions(options);
+    await result.display(result.propositions[0]);
+    const manualDisplay = displays().at(-1);
+    expect(displays()).toHaveLength(analytics ? 2 : 1);
+    expect(manualDisplay.options.personalization).toEqual({
+      sendDisplayEvent: false, defaultPersonalizationEnabled: false,
+    });
+    expect(manualDisplay.options.xdm._experience.decisioning.propositions).toEqual([{
+      id: original.id, scope: original.scope, scopeDetails: original.scopeDetails,
+    }]);
+    if (analytics) {
+      expect(manualDisplay.options.xdm).toEqual(automaticDisplays[0].options.xdm);
+    }
+  });
+});

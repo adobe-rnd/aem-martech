@@ -354,6 +354,18 @@ rules. Keep the default `performanceOptimized: true` if using `martechLazy`
 without its non-performance automatic decision request. Rendering deadlines and
 independent later regions remain the project's responsibility.
 
+Manual fetching and automatic `applyPropositions` share the internal decision-request
+builder, reporting-metadata projection and display-XDM builder. They intentionally
+keep separate rendering state and reporting policy: automatic DOM reporting follows
+the existing analytics lifecycle, while manual reporting requires the project's
+explicit display callback and works with analytics disabled. Sharing the protocol
+does not make a fetched JSON item an automatically rendered or displayed offer.
+
+The separate [PR #17](https://github.com/adobe-rnd/aem-martech/pull/17) adds DOM scope
+discovery and Form-Based HTML targeting to the automatic path. It is not required
+for this opaque manual API or a project's JSON renderer; those features can compose
+without putting site-specific fragment interpretation into martech.
+
 ---
 
 ### `sendAnalyticsEvent(xdmData, dataMapping, configOverrides)`

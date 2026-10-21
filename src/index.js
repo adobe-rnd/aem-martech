@@ -209,6 +209,39 @@ export async function sendEvent(payload) {
   return sendSDKEvent(payload, config.alloyInstanceName);
 }
 
+function requestPropositions({
+  decisionScopes, defaultPersonalizationEnabled, pageURL,
+}, instanceName) {
+  return sendSDKEvent({
+    type: 'decisioning.propositionFetch',
+    renderDecisions: false,
+    personalization: {
+      sendDisplayEvent: false,
+      ...(decisionScopes?.length && { decisionScopes }),
+      ...(defaultPersonalizationEnabled !== undefined && { defaultPersonalizationEnabled }),
+    },
+    ...(pageURL !== undefined && { xdm: { web: { webPageDetails: { URL: pageURL } } } }),
+  }, instanceName);
+}
+
+function getPropositionMetadata({ id, scope, scopeDetails }) {
+  return { id, scope, scopeDetails };
+}
+
+function getPropositionDisplayXDM(propositions, eventType = 'decisioning.propositionDisplay') {
+  return {
+    eventType,
+    ...(propositions.length && {
+      _experience: {
+        decisioning: {
+          propositions,
+          propositionEventType: { display: 1 },
+        },
+      },
+    }),
+  };
+}
+
 /**
  * Fetches opaque propositions for project-owned rendering, without applying or reporting them.
  * Initialize the SDK and update site-policy consent before calling this method.
@@ -245,15 +278,8 @@ export async function fetchPropositions({
 
   let result;
   try {
-    result = await sendSDKEvent({
-      type: 'decisioning.propositionFetch',
-      renderDecisions: false,
-      personalization: {
-        decisionScopes,
-        defaultPersonalizationEnabled,
-        sendDisplayEvent: false,
-      },
-      xdm: { web: { webPageDetails: { URL: pageURL } } },
+    result = await requestPropositions({
+      decisionScopes, defaultPersonalizationEnabled, pageURL,
     }, instanceName);
   } catch (err) {
     // SDK errors can contain request data. Expose only a static, RUM-decorated error.
@@ -273,9 +299,7 @@ export async function fetchPropositions({
       }
       // Keep the original objects public, but snapshot reporting metadata before project code
       // decodes or mutates them. Object membership also rejects clones and foreign fetch results.
-      metadata.set(p, window.structuredClone({
-        id: p.id, scope: p.scope, scopeDetails: p.scopeDetails,
-      }));
+      metadata.set(p, window.structuredClone(getPropositionMetadata(p)));
     });
   } catch (err) {
     return handleRejectedPromise(new Error('Invalid proposition response.'));
@@ -295,15 +319,7 @@ export async function fetchPropositions({
           sendSDKEvent({
             renderDecisions: false,
             personalization: { sendDisplayEvent: false, defaultPersonalizationEnabled: false },
-            xdm: {
-              eventType: 'decisioning.propositionDisplay',
-              _experience: {
-                decisioning: {
-                  propositions: [original],
-                  propositionEventType: { display: 1 },
-                },
-              },
-            },
+            xdm: getPropositionDisplayXDM([original]),
           }, instanceName).then(resolve, reject);
         });
       })).catch(() => handleRejectedPromise(new Error('Could not report proposition display.')));
@@ -562,15 +578,7 @@ let personalizationTimedOut = false;
  * @returns a promise that the display event was sent
  */
 function reportDisplayedPropositions(propositions) {
-  return sendAnalyticsEvent({
-    eventType: 'decisioning.propositionDisplay',
-    _experience: {
-      decisioning: {
-        propositions,
-        propositionEventType: { display: 1 },
-      },
-    },
-  });
+  return sendAnalyticsEvent(getPropositionDisplayXDM(propositions));
 }
 
 /**
@@ -585,7 +593,7 @@ function reportLateDisplayedPropositions(propositionIds) {
   }
   const newlyDisplayed = (response?.propositions || [])
     .filter((p) => propositionIds.includes(p.id) && !reportedPropositionIds.has(p.id))
-    .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+    .map(getPropositionMetadata);
   if (!newlyDisplayed.length) {
     return;
   }
@@ -606,14 +614,9 @@ function reportLateDisplayedPropositions(propositionIds) {
 async function applyPropositions(instanceName) {
   // Get the decisions, but don't render them automatically
   // so we can hook up into the AEM EDS page load sequence
-  const renderDecisionResponse = await sendEvent({
-    type: 'decisioning.propositionFetch',
-    renderDecisions: false,
-    personalization: {
-      sendDisplayEvent: false,
-      ...(config.decisionScopes?.length && { decisionScopes: config.decisionScopes }),
-    },
-  });
+  const renderDecisionResponse = await requestPropositions({
+    decisionScopes: config.decisionScopes,
+  }, instanceName);
   response = renderDecisionResponse;
   if (!renderDecisionResponse?.propositions) {
     return [];
@@ -875,7 +878,7 @@ export async function martechEager() {
         // dom-actions (and are handled by project code instead)
         const propositions = (response?.propositions || [])
           .filter((p) => !domActionPropositionIds.has(p.id) || renderedPropositionIds.has(p.id))
-          .map((p) => ({ id: p.id, scope: p.scope, scopeDetails: p.scopeDetails }));
+          .map(getPropositionMetadata);
         propositions.forEach((p) => reportedPropositionIds.add(p.id));
         initialDisplayReported = true;
         if (!config.trackPageView && !propositions.length) {
@@ -883,19 +886,12 @@ export async function martechEager() {
           // is tracked elsewhere
           return;
         }
-        sendAnalyticsEvent({
-          eventType: config.trackPageView
+        sendAnalyticsEvent(getPropositionDisplayXDM(
+          propositions,
+          config.trackPageView
             ? 'web.webpagedetails.pageViews'
             : 'decisioning.propositionDisplay',
-          ...(propositions.length && {
-            _experience: {
-              decisioning: {
-                propositions,
-                propositionEventType: { display: 1 },
-              },
-            },
-          }),
-        });
+        ));
       });
     });
   }
