@@ -216,9 +216,9 @@ function requestPropositions({
     type: 'decisioning.propositionFetch',
     renderDecisions: false,
     personalization: {
-      sendDisplayEvent: false,
       ...(decisionScopes?.length && { decisionScopes }),
       ...(defaultPersonalizationEnabled !== undefined && { defaultPersonalizationEnabled }),
+      sendDisplayEvent: false,
     },
     ...(pageURL !== undefined && { xdm: { web: { webPageDetails: { URL: pageURL } } } }),
   }, instanceName);
