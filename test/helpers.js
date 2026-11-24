@@ -1,6 +1,9 @@
 import { vi } from 'vitest';
 
-const MANAGED_GLOBALS = ['__alloyNS', 'alloy', 'adobeDataLayer', '__alloyMockHandlers'];
+const MANAGED_GLOBALS = [
+  '__alloyNS', 'alloy', 'adobeDataLayer', '__alloyMockHandlers', '__alloyMonitors',
+  '__alloyMockAutoRender',
+];
 
 /**
  * Resets the browser globals and the module registry so every test gets a fresh copy of the

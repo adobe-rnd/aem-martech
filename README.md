@@ -31,6 +31,7 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
       - [Integrating with AEM Consent Banner Block](#integrating-with-aem-consent-banner-block)
       - [Integrating with OneTrust](#integrating-with-onetrust)
       - [Integrating with Cookiebot](#integrating-with-cookiebot)
+  - [Working with Form-Based Activities](#working-with-form-based-activities)
   - [Working with Dynamic Content (SPAs)](#working-with-dynamic-content-spas)
   - [FAQ](#faq)
     - [Why not use the default Adobe Launch approach?](#why-not-use-the-default-adobe-launch-approach)
@@ -169,7 +170,7 @@ async function loadEager(doc) {
     {
       datastreamId: /* your datastream id here */,
       orgId: /* your IMS org id here */,
-      // The `debugEnabled` flag is automatically set to true on localhost and .page URLs.
+      // The `debugEnabled` flag is automatically set to true on localhost, .page, and .aem.network URLs.
       // The `defaultConsent` is automatically set to "pending".
       onBeforeEventSend: (payload) => {
         // This callback allows you to modify the payload before it's sent.
@@ -186,6 +187,8 @@ async function loadEager(doc) {
       // To request additional decision scopes beyond the default `__view__` scope,
       // list them here. They are added to the eager personalization fetch.
       // decisionScopes: ['my-scope-name'],
+      // Form-Based HTML offers are targeted via `mbox` section metadata (auto-discovered as
+      // `data-mbox`) — see "Working with Form-Based Activities" below.
       // See the API Reference for all available options.
     },
   );
@@ -253,9 +256,14 @@ Initializes the library. This should be called once in `loadEager`.
   - `personalization` `{Boolean}`: Enable personalization. Default: `true`.
   - `performanceOptimized` `{Boolean}`: Use aggressive performance optimizations. Default: `true`.
   - `personalizationTimeout` `{Number}`: Timeout in ms for personalization. Default: `1000`.
-  - `trackPageView` `{Boolean}`: Whether to automatically send a page view event on page activation. When `false`, the library sends a `decisioning.propositionDisplay` event instead, so proposition display is still reported to Target without triggering an extra page view. Set to `false` if this is already handled separately in the page. Default: `true`.
+  - `trackPageView` `{Boolean}`: Whether to automatically send a page view event on page activation. Proposition display is reported independently via `decisioning.propositionDisplay` as each offer renders, so setting this to `false` (e.g. when page views are handled separately) still reports impressions to Target without an extra page view. Default: `true`.
   - `shouldProcessEvent` `{Function}`: A function that receives a data layer event payload and returns `false` to prevent it from being sent.
   - `decisionScopes` `{String[]}`: Additional decision scopes to request beyond the default `__view__` scope. Previously this required mutating the payload via `onBeforeEventSend`; this provides a dedicated config field. The scopes are included in both the eager `propositionFetch` (when `performanceOptimized` is `true`) and the `martechLazy` `sendEvent` (when `performanceOptimized` is `false`), with `__view__` always included. Default: `[]`.
+  - `propositionScopeAttribute` `{String|null}`: The `data-*` attribute the plugin scans to auto-discover decision scopes from the DOM (rendered from `mbox` section metadata). Comma-separated values declare multiple scopes per element. Set to `null` to disable auto-discovery. Auto-discovery only runs in the performance-optimized eager path (the default); when `performanceOptimized` is `false`, request scopes explicitly via `decisionScopes`. Default: `'mbox'`.
+  - `discoveredScopeActionType` `{String}`: Default `actionType` for auto-discovered scopes when neither the offer nor the section's `data-mbox-action` specifies one. One of `'setHtml'`, `'replaceHtml'`, `'appendHtml'`. Default: `'setHtml'`.
+  - `holdPersonalizedSections` `{Boolean}`: Keep the sections marked for personalization (`data-mbox`) hidden, with their space reserved, until their offer is in place, so visitors never see the default content swap. See [Avoiding flicker](#avoiding-flicker). Default: `false`.
+  - `personalizationHoldTimeout` `{Number}`: How long in ms to wait for offers. After it, offers the Web SDK hasn't started rendering are dropped and their sections show as they are. A section whose offer the SDK is already rendering stays hidden until the SDK reports the result, at most 5 more seconds (how long the SDK waits for an offer's target). Default: `3000`.
+  - `beforePersonalizedReveal` `{Function}`: Optional async function called with the elements an offer changed, before they are shown. Use it to finish decorating blocks the offer brought in.
 
 ---
 
@@ -304,6 +312,11 @@ Initializes RUM (Real User Monitoring) tracking.
 
 - **`sampleRUM`** `{Object}`: The RUM sampling object.
 - **`options`** `{Object}`: Optional configuration.
+
+---
+
+### `stopPersonalization()`
+Stops personalization for the current page view: offers the Web SDK hasn't started rendering are dropped, and the sections held for them by `holdPersonalizedSections` show as they are. Offers the SDK is already rendering can't be called back, so their sections show once the SDK reports the result.
 
 ---
 
@@ -366,6 +379,133 @@ function setupCookiebotConsent() {
 
 setupCookiebotConsent();
 ```
+
+## Working with Form-Based Activities
+
+Form-Based HTML offers in Adobe Target deliver an `html-content-item` proposition that
+doesn't carry a CSS selector in the offer payload. The plugin needs to know where to put
+the HTML. The recommended way to wire this up in EDS is **author-controlled section
+metadata** — authors tag sections in DA with `mbox` rows, the Helix HTML pipeline
+pre-renders these as `data-mbox` attributes on the section element, and the plugin
+discovers them automatically at the start of `martechEager`.
+
+### Authoring contract
+
+In DA, add a `section-metadata` block to any section you want to personalize:
+
+| section metadata | |
+|---|---|
+| mbox | hero-offer |
+
+Multiple mboxes per section (comma-separated):
+
+| section metadata | |
+|---|---|
+| mbox | hero-offer, audience-banner |
+
+Optional per-section actionType override (default is `setHtml`, which preserves the
+section element and its decoration state — see "Why `setHtml`" below):
+
+| section metadata | |
+|---|---|
+| mbox | hero-offer |
+| mbox-action | replaceHtml |
+
+Valid `mbox-action` values: `setHtml`, `replaceHtml`, `appendHtml`. Invalid values fall
+back to the default with a debug warning.
+
+### What the plugin does
+
+For each `[data-mbox]` element it discovers:
+
+1. Splits the attribute value on `,` to get individual mbox names.
+2. Sanitizes each name for CSS identifier safety: `name.replace(/[^a-zA-Z0-9_-]/g, '-')`.
+3. Adds a synthetic class `martech-mbox-{sanitized-name}` to the element (idempotent).
+4. Registers `{ selector: '.martech-mbox-{sanitized-name}', actionType }` for the scope in
+   an internal map used to place `html-content-item` offers. An offer that embeds its own
+   selector still wins over the synthetic one.
+5. Adds the unsanitized mbox name to `config.decisionScopes` (de-duplicated).
+6. Marks the element with `martech-mbox-scanned` so subsequent per-tick re-scans skip it.
+
+The plugin's existing `MutationObserver` (which runs `applyPropositions` on every section /
+block decoration tick) re-runs the same scan, so mboxes introduced by fragments, dynamic
+blocks, or Universal Editor edits also get picked up. Scopes that arrive *after* the eager
+`propositionFetch` are logged with a debug warning — they won't be personalized on this
+page load (v1 limitation; the eager fetch is single-shot).
+
+### Why `setHtml` is the default
+
+`setHtml` replaces the *children* of the target element — preserving the element itself,
+its `class="section"`, `data-section-status="loaded"`, scroll-reveal state, and the
+`data-mbox` attribute (so a second offer for the same scope can still target it).
+`replaceHtml` swaps the element out entirely; useful when an offer is authored as a
+whole section but easy to misuse (it removes EDS decoration markers that downstream code
+may rely on). Choose `replaceHtml` per-section when you know the offer is shaped like
+the section it replaces.
+
+### Configuration
+
+```js
+initMartech(webSDKConfig, {
+  personalization: true,
+  // Default values shown — adjust to taste:
+  propositionScopeAttribute: 'mbox',       // set to null to disable auto-discovery
+  discoveredScopeActionType: 'setHtml',    // default for discovered scopes
+});
+```
+
+See [`docs/form-based-target-activities.md`](./docs/form-based-target-activities.md) for a
+focused, author-facing walkthrough of using Form-Based activities.
+
+### Avoiding flicker
+
+Without it, a section shows its default content first, and the offer replaces it when Target
+answers. With `holdPersonalizedSections: true`, the plugin hides only the sections marked with
+`data-mbox` (with `filter: opacity(0)` and `inert`, so their space is kept and nothing jumps;
+the site's and the offers' own `opacity` are left alone) and shows each one
+once its own offer is on the page. The rest of the page renders as usual; nothing hides the body.
+
+- A section with no offer for this visitor shows as soon as Target answers.
+- If Target does not answer within `personalizationTimeout`, every section shows its default
+  content and late offers are not applied.
+- `personalizationHoldTimeout` caps how long to wait for offers; an offer the Web SDK is already
+  rendering by then keeps its section hidden until the SDK reports the result, so it never swaps
+  content a visitor is already looking at.
+- Markup that replaces a section (`replaceHtml`) stays hidden until its offer is in place.
+
+If an offer brings in block markup your project decorates (for example by re-running block
+loading on injected markup), pass `beforePersonalizedReveal` so the section shows once that
+is done:
+
+```js
+initMartech(webSDKConfig, {
+  holdPersonalizedSections: true,
+  beforePersonalizedReveal: async (elements) => {
+    await Promise.all(elements.map((el) => decorateInjectedBlocks(el)));
+  },
+});
+```
+
+A section shows when the Web SDK reports that it finished rendering the offer (through
+`window.__alloyMonitors`), not when `applyPropositions` returns, since that happens before the
+offer is on the page. If rendering fails, the section shows its default content.
+
+Visual Experience Composer (VEC) offers are held too, when their selector points into a marked
+section or contains one (Target's `:eq(n)` selectors included). An offer whose target isn't on
+the page yet holds every marked section until it renders or `personalizationHoldTimeout` passes. Offers that only track clicks change
+nothing on the page and hold nothing.
+
+With `replaceHtml`, the Web SDK inserts the offer before the section and removes the section
+once the offer's scripts have run. Both stay hidden until then, so the offer shows complete.
+For the other actions the Web SDK doesn't wait for an offer's external scripts: the section
+shows once the offer's markup is in place. An offer that builds its content with an external
+script should use `replaceHtml`, or carry its markup in the offer itself. Wrap a `replaceHtml` offer's content in an element: text at its top
+level can't be hidden, so it shows as soon as it is inserted.
+
+An offer is reported to Target as displayed once it is rendered and its section is shown.
+
+A VEC offer that changes an element containing marked sections (for example `main`) holds that
+element instead, until its offer is rendered.
 
 ## Working with Dynamic Content (SPAs)
 

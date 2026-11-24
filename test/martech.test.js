@@ -83,7 +83,10 @@ describe('martechEager (performance-optimized personalization)', () => {
     await initMartech(TEST_WEBSDK_CONFIG, { decisionScopes: ['my-scope'] });
     await martechEager();
     const [fetch] = alloyCalls('sendEvent');
-    expect(fetch.options.personalization.decisionScopes).toEqual(['my-scope']);
+    // `__view__` is always requested alongside named scopes: the Web SDK treats decisionScopes
+    // as the exact set to fetch, so omitting it silently drops all VEC / page-load (view)
+    // propositions on any page that also requests a named scope.
+    expect(fetch.options.personalization.decisionScopes).toEqual(['__view__', 'my-scope']);
   });
 });
 
