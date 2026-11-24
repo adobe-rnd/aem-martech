@@ -22,11 +22,16 @@ At page load the plugin:
 - scans for `data-mbox` attributes and requests those scopes (alongside the default
   `__view__` scope),
 - adds a synthetic `.martech-mbox-{scope}` class to each tagged section, and
-- applies the matching offer to that section as it renders. Late-arriving content
-  (fragments, dynamic blocks, Universal Editor edits) is picked up on later ticks.
+- applies the matching offer to that section as it renders. A section that renders later
+  (a fragment or a dynamic block) still gets its offer, as long as its `mbox` was on the page
+  when the offers were requested. An `mbox` that only appears later isn't requested on that
+  page view (it is logged with `debugEnabled: true`).
+
+To keep visitors from seeing the default content before the offer replaces it, set
+`holdPersonalizedSections: true` (see "Avoiding flicker" in the README).
 
 If an offer carries its own selector (DA "Send to Target" offers do), that selector wins
-over the auto-discovered one. Offers with no usable selector — none embedded and no
+over the auto-discovered one, for each item of the offer. Offers with no usable selector — none embedded and no
 `data-mbox` on the page — are dropped (enable `debugEnabled: true` to see why).
 
 ## Action types

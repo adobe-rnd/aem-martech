@@ -53,6 +53,18 @@
  *                                          `data-mbox-action` attribute specifies one.
  *                                          Valid values: 'setHtml', 'replaceHtml',
  *                                          'appendHtml'. (defaults to "setHtml")
+ * @property {Boolean} holdPersonalizedSections Keep the elements marked for personalization
+ *                                          (`data-mbox`, see `propositionScopeAttribute`) hidden,
+ *                                          with their space reserved, until their offer is in
+ *                                          place or Target answers without one, instead of
+ *                                          showing the default content first. Only the
+ *                                          performance-optimized path. (defaults to false)
+ * @property {Number} personalizationHoldTimeout The most time in ms a held element stays hidden.
+ *                                          After it, everything held is shown and offers not
+ *                                          applied yet are dropped. (defaults to 3000)
+ * @property {Function} beforePersonalizedReveal Optional async function called with the elements
+ *                                          an offer changed, before they are shown, for example
+ *                                          to finish decorating blocks the offer brought in.
  */
 const SCHEMA_DOM_ACTION = 'https://ns.adobe.com/personalization/dom-action';
 const SCHEMA_HTML_CONTENT_ITEM = 'https://ns.adobe.com/personalization/html-content-item';
@@ -77,6 +89,9 @@ export const DEFAULT_CONFIG = {
   decisionScopes: [],
   propositionScopeAttribute: 'mbox',
   discoveredScopeActionType: 'setHtml',
+  holdPersonalizedSections: false,
+  personalizationHoldTimeout: 3000,
+  beforePersonalizedReveal: null,
 };
 
 let config;
@@ -510,6 +525,10 @@ let response;
 // html-content-item), which of those were effectively rendered, and which were already reported
 // as displayed. renderedPropositionIds/reportedPropositionIds are declared at module top.
 let domActionPropositionIds = new Set();
+// held offers the Web SDK took -> the elements they change: reported as displayed once they
+// are rendered and those elements are shown
+const reportOnReveal = new Map();
+
 let initialDisplayReported = false;
 let personalizationTimedOut = false;
 
@@ -580,16 +599,22 @@ function discoverPropositionScopes(root) {
       if (sanitized !== scope) {
         debug('martech', `mbox name "${scope}" sanitized to "${sanitized}" for CSS class`);
       }
-      const scopeSelector = `.martech-mbox-${sanitized}`;
-      // Distinct raw scopes can sanitize to the same class (e.g. "a.b" and "a-b"). Warn so a
-      // silent wrong-element application is at least discoverable in debug.
-      const collision = [...discoveredScopeMeta]
-        .find(([s, m]) => s !== scope && m.selector === scopeSelector);
-      if (collision) {
-        debug('martech', `mbox "${scope}" and "${collision[0]}" both map to ${scopeSelector}; an offer for one may target the other's element`);
+      // the same scope on several elements shares one class, so its offer reaches them all
+      let scopeClass = discoveredScopeMeta.get(scope)?.selector.slice(1);
+      if (!scopeClass) {
+        // Distinct raw scopes can sanitize to the same class (e.g. "a.b" and "a-b"): give the
+        // later one its own, so an offer for one never lands on the other's element
+        const taken = new Set([...discoveredScopeMeta.values()].map((m) => m.selector));
+        scopeClass = `martech-mbox-${sanitized}`;
+        for (let n = 2; taken.has(`.${scopeClass}`); n += 1) {
+          scopeClass = `martech-mbox-${sanitized}-${n}`;
+        }
       }
-      el.classList.add(`martech-mbox-${sanitized}`);
-      discoveredScopeMeta.set(scope, { selector: scopeSelector, actionType });
+      el.classList.add(scopeClass);
+      discoveredScopeMeta.set(scope, {
+        selector: `.${scopeClass}`,
+        actionType: discoveredScopeMeta.get(scope)?.actionType || actionType,
+      });
       newScopes.push(scope);
     });
     el.classList.add(SCANNED_MARKER);
@@ -637,6 +662,535 @@ function reportLateDisplayedPropositions(propositionIds) {
 }
 
 /**
+ * Reports offers as displayed: in the page view when it hasn't gone out yet, else on their own.
+ * @param {String[]} ids the ids of propositions now on the page
+ */
+function reportDisplayed(ids) {
+  const fresh = ids.filter((id) => !renderedPropositionIds.has(id));
+  fresh.forEach((id) => renderedPropositionIds.add(id));
+  reportLateDisplayedPropositions(fresh);
+}
+
+/**
+ * Finds the elements an offer's selector points to, the way the Web SDK does: it understands
+ * Target's `:eq(n)` (the n-th match so far), which browsers don't.
+ * @param {String} selector the offer's selector
+ * @returns {Element[]} the elements, none when nothing matches yet
+ */
+function findTargets(selector) {
+  if (!selector.includes(':eq(')) return [...document.querySelectorAll(selector)];
+  const parts = selector.trim().split(/:eq\((\d+)\)/).filter((part) => part.length > 0);
+  let context = document;
+  let found = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    // a part that starts with a combinator (`> p`) is relative to the element picked so far
+    const part = parts[i].trim();
+    const relative = context !== document && /^[>+~]/.test(part);
+    const matches = [...context.querySelectorAll(relative ? `:scope ${part}` : part)];
+    const eq = parts[i + 1] === undefined ? undefined : Number(parts[i + 1]);
+    if (!matches.length || (eq !== undefined && eq > matches.length - 1)) return [];
+    const picked = eq === undefined ? matches : [matches[eq]];
+    if (i + 2 >= parts.length) found = picked;
+    [context] = picked;
+  }
+  return found;
+}
+
+// Holding personalized elements (`holdPersonalizedSections`): the elements marked for
+// personalization stay hidden, with their space reserved, until their offer is in place, so
+// visitors never see the default content before an offer replaces it.
+// an attribute rather than a class, so an offer that sets an element's classes doesn't show it
+const HOLD_ATTRIBUTE = 'data-martech-personalization-pending';
+const HOLD_SELECTOR = `[${HOLD_ATTRIBUTE}]`;
+const HOLD_STYLE_ID = 'martech-personalization-pending';
+// how long the Web SDK keeps waiting for an offer's target before it gives up on rendering it
+const SDK_RENDER_WAIT = 5000;
+let hold;
+
+function setHeld(el, held) {
+  el.toggleAttribute(HOLD_ATTRIBUTE, held);
+  if (held) {
+    if (!el.hasAttribute('inert')) {
+      el.setAttribute('inert', '');
+      hold.addedInert.add(el);
+    }
+  } else if (hold.addedInert.delete(el)) {
+    el.removeAttribute('inert');
+  }
+}
+
+// an element's personalization attribute can list several scopes ("hero-offer, banner")
+function elementScopes(el) {
+  return String(el.getAttribute(`data-${config.propositionScopeAttribute}`) || '')
+    .split(',').map((scope) => scope.trim()).filter(Boolean);
+}
+
+/**
+ * Forgets offers that won't change the page anymore (dropped, or failed to render), including
+ * the elements they were going to replace.
+ * @param {String[]} ids the ids of the propositions
+ */
+function forgetOffers(ids) {
+  ids.forEach((id) => {
+    hold.pending.delete(id);
+    hold.replacedBy.delete(id);
+    hold.nestedReplaced.delete(id);
+    hold.lateReplaced.delete(id);
+  });
+  const stillReplaced = new Set([...hold.replacedBy.values()].flatMap((els) => [...els]));
+  [...hold.replaceTargets].forEach((el) => {
+    if (!stillReplaced.has(el)) hold.replaceTargets.delete(el);
+  });
+}
+
+// Holds one more element, watching its parent for markup that replaces it.
+function holdElement(el) {
+  if (hold.elements.has(el)) return;
+  hold.elements.add(el);
+  setHeld(el, true);
+  if (el.parentElement) hold.observer.observe(el.parentElement, { childList: true });
+}
+
+// held offers the Web SDK has rendered
+const renderedOffers = new Set();
+// offers whose items all failed to render: never displayed
+const failedOffers = new Set();
+
+// Reports the held offers that are now rendered and visible.
+function reportShownOffers() {
+  // on the page and not inside anything held; or replaced by the offer's markup, now shown.
+  // An element removed otherwise (e.g. another offer replaced what was around it) never was.
+  const isShown = (el) => (el.isConnected
+    ? !el.closest(HOLD_SELECTOR)
+    : [...(hold?.replacements || [])].some(([node, replaced]) => replaced === el
+      && node.isConnected && !node.closest(HOLD_SELECTOR)));
+  const shown = [...reportOnReveal]
+    .filter(([id, elements]) => renderedOffers.has(id) && [...elements].every(isShown))
+    .map(([id]) => id);
+  shown.forEach((id) => reportOnReveal.delete(id));
+  reportDisplayed(shown);
+}
+
+function releaseAllHeld() {
+  if (!hold || hold.done) return;
+  hold.done = true;
+  clearTimeout(hold.timer);
+  hold.observer.disconnect();
+  hold.lateObserver.disconnect();
+  [...hold.elements, ...hold.replacements.keys()].forEach((el) => setHeld(el, false));
+  hold.pending.clear();
+  reportShownOffers();
+}
+
+// Whether a `replaceHtml` offer is replacing the element: it is a target of one, or might be
+// (the offer's selector is one only the Web SDK understands) and markup was inserted for it.
+function isBeingReplaced(el) {
+  return hold.replaceTargets.has(el)
+    || (hold.mayBeReplaced.has(el) && [...hold.replacements.values()].includes(el));
+}
+
+/**
+ * Looks up `replaceHtml` targets that weren't on the page when Target answered, before the Web
+ * SDK applies the offers (afterwards, a positional selector could match the offer itself).
+ */
+function trackLateReplaced() {
+  if (!hold || hold.done) return;
+  [...hold.lateReplaced].forEach(([id, selectors]) => {
+    const left = selectors.filter((selector) => {
+      let targets = [];
+      try {
+        targets = findTargets(selector);
+      } catch { /* not a selector the browser can parse */ }
+      const inside = targets.filter((target) => [...hold.elements]
+        .some((el) => el !== target && el.contains(target)));
+      inside.forEach((target) => {
+        if (!hold.nestedReplaced.has(id)) hold.nestedReplaced.set(id, new Set());
+        hold.nestedReplaced.get(id).add(target);
+        hold.observer.observe(target.parentElement, { childList: true });
+      });
+      return !targets.length;
+    });
+    if (left.length) hold.lateReplaced.set(id, left); else hold.lateReplaced.delete(id);
+  });
+  if (!hold.lateReplaced.size) hold.lateObserver.disconnect();
+}
+
+// Whether an offer's `replaceHtml` still waits for the Web SDK to remove what it replaces.
+function isStillReplacing(id) {
+  return [...(hold.pending.get(id) || [])]
+    .some((el) => el.isConnected && hold.replacedBy.get(id)?.has(el) && isBeingReplaced(el))
+    || [...(hold.pending.get(id) || [])].some((el) => el.isConnected
+      && hold.mayBeReplaced.has(el) && [...hold.replacements.values()].includes(el))
+    || [...(hold.nestedReplaced.get(id) || [])].some((el) => el.isConnected);
+}
+
+// Shows every held element no pending offer will change, and markup that replaced one.
+function revealSettled() {
+  // nothing is settled before Target has answered
+  if (!hold.decided) return;
+  const pending = new Set([...hold.pending.values()].flatMap((elements) => [...elements]));
+  hold.elements.forEach((el) => {
+    // an element a `replaceHtml` offer replaces stays hidden until the Web SDK removes it,
+    // which it does only after the offer's scripts have run
+    if (pending.has(el) || (el.isConnected && isBeingReplaced(el))) return;
+    setHeld(el, false);
+  });
+  hold.replacements.forEach((replaced, el) => {
+    if (!pending.has(replaced)) setHeld(el, false);
+  });
+  const replacing = [...hold.elements].some((el) => el.isConnected && isBeingReplaced(el));
+  if (!hold.pending.size && !replacing) releaseAllHeld();
+  reportShownOffers();
+}
+
+/**
+ * Stops waiting for offers: the ones not handed to the Web SDK yet are dropped and their
+ * elements shown. An offer the SDK is already rendering can't be called back, so its elements
+ * stay hidden until the SDK reports the result, at most as long as it waits for a target.
+ */
+function giveUpHold() {
+  personalizationTimedOut = true;
+  if (!hold || hold.done) return;
+  hold.decided = true;
+  forgetOffers([...hold.pending.keys()].filter((id) => !hold.handed.has(id)));
+  revealSettled();
+  if (!hold.done) {
+    clearTimeout(hold.timer);
+    hold.timer = setTimeout(releaseAllHeld, SDK_RENDER_WAIT);
+  }
+}
+
+/**
+ * Shows the elements of offers the Web SDK finished rendering (or failed to), once the project
+ * is done with them (`beforePersonalizedReveal`).
+ * @param {String[]} ids the ids of the propositions
+ * @param {Boolean} [rendered=true] false when they changed nothing (failed, or never applied)
+ */
+async function revealRendered(ids, rendered = true) {
+  if (!hold || hold.done) return;
+  ids.forEach((id) => hold.rendered.add(id));
+  // `replaceHtml`: the Web SDK reports it rendered before the offer's scripts have run; it
+  // removes the element the offer replaces once they have. Wait for that.
+  ids.filter((id) => hold.pending.has(id) && isStillReplacing(id))
+    .forEach((id) => hold.awaitingRemoval.add(id));
+  const offers = ids.filter((id) => hold.pending.has(id) && !hold.awaitingRemoval.has(id));
+  if (!offers.length) return;
+  // a failed offer changed nothing: there is nothing to decorate
+  if (rendered && config.beforePersonalizedReveal) {
+    const elements = new Set(offers.flatMap((id) => [...hold.pending.get(id)]));
+    const changed = [...elements]
+      .filter((el) => el.isConnected && !hold.replaceTargets.has(el));
+    hold.replacements.forEach((replaced, el) => {
+      if (elements.has(replaced)) changed.push(el);
+    });
+    try {
+      await config.beforePersonalizedReveal(changed);
+    } catch (err) {
+      debug('martech', 'beforePersonalizedReveal failed', err);
+    }
+  }
+  if (hold.done) return;
+  offers.forEach((id) => hold.pending.delete(id));
+  revealSettled();
+}
+
+/**
+ * One item of an offer failed: if it was a `replaceHtml`, nothing will remove its target.
+ * @param {String} id the proposition id
+ * @param {Object} [item] the failed item, as the Web SDK reports it
+ */
+function forgetFailedReplacement(id, item) {
+  if (item?.data?.type !== 'replaceHtml' || !item.data.selector) return;
+  const late = (hold.lateReplaced.get(id) || []).filter((sel) => sel !== item.data.selector);
+  if (late.length) hold.lateReplaced.set(id, late); else hold.lateReplaced.delete(id);
+  let targets = [];
+  try {
+    targets = findTargets(item.data.selector);
+  } catch { /* not a selector the browser can parse */ }
+  targets.forEach((target) => {
+    hold.nestedReplaced.get(id)?.delete(target);
+    hold.replacedBy.get(id)?.delete(target);
+  });
+  const stillReplaced = new Set([...hold.replacedBy.values()].flatMap((els) => [...els]));
+  [...hold.replaceTargets].forEach((el) => {
+    if (!stillReplaced.has(el)) hold.replaceTargets.delete(el);
+  });
+  if (hold.awaitingRemoval.has(id) && !isStillReplacing(id)) {
+    hold.awaitingRemoval.delete(id);
+    revealRendered([id]);
+  }
+}
+
+// `applyPropositions` resolves when the Web SDK has started rendering, not when the offers are
+// on the page. Its monitors report when rendering is actually done (or failed).
+let renderingWatched = false;
+function watchRendering() {
+  if (renderingWatched) return;
+  renderingWatched = true;
+  window.__alloyMonitors = window.__alloyMonitors || [];
+  window.__alloyMonitors.push({
+    onContentRendering({ instanceName, status, payload }) {
+      if (instanceName && instanceName !== config.alloyInstanceName) return;
+      if (status === 'rendering-succeeded') {
+        const ids = Object.values(payload || {}).flat().map((p) => p?.id).filter(Boolean);
+        ids.forEach((id) => renderedOffers.add(id));
+        revealRendered(ids).finally(reportShownOffers);
+      } else if (status === 'rendering-failed' && payload?.propositionDetails?.id && hold) {
+        // failed items never count as displayed
+        // the SDK reports each item that fails; when some render, it reports the offer as
+        // rendered once all its items are done. When they all fail, nothing changed on the
+        // page for it: show the default content.
+        const { id } = payload.propositionDetails;
+        forgetFailedReplacement(id, payload.item);
+        const failed = (hold.failedItems.get(id) || 0) + 1;
+        hold.failedItems.set(id, failed);
+        if (failed < (hold.itemCounts.get(id) || 1)) return;
+        // the SDK reports it rendered even so: it never counts as displayed
+        failedOffers.add(id);
+        reportOnReveal.delete(id);
+        hold.awaitingRemoval.delete(id);
+        hold.nestedReplaced.delete(id);
+        hold.lateReplaced.delete(id);
+        // nothing replaces its elements anymore either
+        hold.replacedBy.get(id)?.forEach((el) => {
+          if (![...hold.replacedBy].some(([other, els]) => other !== id && els.has(el))) {
+            hold.replaceTargets.delete(el);
+          }
+        });
+        revealRendered([id], false);
+      }
+    },
+  });
+}
+
+/**
+ * Hides the elements marked for personalization until Target has decided (see
+ * `holdPersonalizedSections`).
+ */
+function startHold() {
+  if (!config.holdPersonalizedSections || !config.propositionScopeAttribute) return;
+  const elements = [...document.querySelectorAll(`[data-${config.propositionScopeAttribute}]`)];
+  if (!elements.length) return;
+  if (!document.getElementById(HOLD_STYLE_ID)) {
+    const style = document.createElement('style');
+    style.id = HOLD_STYLE_ID;
+    // a filter rather than opacity, so the site's and the offers' own opacity are left alone;
+    // like opacity, it hides everything inside and keeps the space
+    style.textContent = `${HOLD_SELECTOR} { filter: opacity(0) !important; }`;
+    document.head.append(style);
+  }
+  hold = {
+    elements: new Set(elements),
+    // markup that replaced a held element (a `replaceHtml` offer) -> the element it replaced
+    replacements: new Map(),
+    // proposition id -> the held elements it changes, for offers still to be rendered
+    pending: new Map(),
+    rendered: new Set(),
+    // offers the Web SDK has started rendering
+    handed: new Set(),
+    // held elements a `replaceHtml` offer replaces: they stay hidden until removed
+    replaceTargets: new Set(),
+    // proposition id -> the held elements its `replaceHtml` replaces
+    replacedBy: new Map(),
+    // held elements a `replaceHtml` offer whose selector can't be resolved might replace
+    mayBeReplaced: new Set(),
+    // rendered `replaceHtml` offers whose scripts are still running
+    awaitingRemoval: new Set(),
+    // held elements an offer inserts markup before or after (`insertBefore`, `insertAfter`)
+    insertedAround: new Set(),
+    // proposition id -> elements inside held ones its `replaceHtml` replaces
+    nestedReplaced: new Map(),
+    // proposition id -> its `replaceHtml` selectors that matched nothing when Target answered
+    lateReplaced: new Map(),
+    // watches for `lateReplaced` targets; created now, before the Web SDK's own watchers
+    lateObserver: new MutationObserver(() => trackLateReplaced()),
+    // proposition id -> how many of its items the Web SDK failed to render, and has to render
+    failedItems: new Map(),
+    itemCounts: new Map(),
+    addedInert: new Set(),
+    decided: false,
+    done: false,
+  };
+  elements.forEach((el) => setHeld(el, true));
+  const parents = new Set(elements.map((el) => el.parentElement).filter(Boolean));
+  hold.observer = new MutationObserver((mutations) => {
+    const addedNodes = mutations.flatMap((m) => [...m.addedNodes]);
+    if (addedNodes.some((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim())) {
+      debug('martech', 'an offer put text outside an element: it can\'t be held until rendered; wrap the offer\'s content in an element');
+    }
+    const added = new Set(addedNodes
+      .filter((node) => node.nodeType === Node.ELEMENT_NODE && !hold.elements.has(node)));
+    // the rest of what the offer inserted (whitespace, comments, text): skipped when looking
+    // for the element it was inserted next to
+    const insertedOther = new Set(addedNodes.filter((node) => !added.has(node)
+      && node.nodeType !== Node.ELEMENT_NODE));
+    const isInserted = (node) => added.has(node) || insertedOther.has(node);
+    const replace = (node, replaced) => {
+      if (!added.has(node) || hold.replacements.has(node)) return false;
+      hold.replacements.set(node, replaced);
+      setHeld(node, true);
+      return true;
+    };
+    // `replaceHtml`: the Web SDK inserts the offer's markup right before the element it
+    // replaces, and removes that element later
+    added.forEach((node) => {
+      let next = node.nextSibling;
+      while (next && isInserted(next)) next = next.nextSibling;
+      if (next && (hold.replaceTargets.has(next) || hold.mayBeReplaced.has(next)
+        || hold.insertedAround.has(next))) {
+        replace(node, next);
+        return;
+      }
+      // `insertAfter`: right after the element
+      let previous = node.previousSibling;
+      while (previous && isInserted(previous)) previous = previous.previousSibling;
+      if (previous && hold.insertedAround.has(previous)) replace(node, previous);
+    });
+    mutations.forEach((m) => [...m.removedNodes].forEach((replaced) => {
+      if (!hold.elements.has(replaced)) return;
+      // the offer's markup is what was inserted in its place: in the same record
+      // (replaceWith), or right before or after where it was
+      m.addedNodes.forEach((node) => replace(node, replaced));
+      for (let node = m.previousSibling; node && isInserted(node);) {
+        replace(node, replaced);
+        node = node.previousSibling;
+      }
+      for (let node = m.nextSibling; node && isInserted(node);) {
+        replace(node, replaced);
+        node = node.nextSibling;
+      }
+    }));
+    // the Web SDK removed an element a rendered `replaceHtml` offer replaced
+    const removed = [...hold.awaitingRemoval].filter((id) => !isStillReplacing(id));
+    removed.forEach((id) => hold.awaitingRemoval.delete(id));
+    if (removed.length) revealRendered(removed);
+    revealSettled();
+  });
+  parents.forEach((parent) => hold.observer.observe(parent, { childList: true }));
+  // too late: show what is there and never swap it afterwards
+  hold.timer = setTimeout(giveUpHold, config.personalizationHoldTimeout);
+}
+
+// Actions that only record something (click tracking) and never change the page.
+const NON_RENDERING_ACTIONS = new Set(['click']);
+const changesPage = (item) => !NON_RENDERING_ACTIONS.has(item.data?.type);
+
+/**
+ * The held elements an offer changes: those named by its scope, and those its items' selectors
+ * point into or contain. A selector that resolves to nothing yet could point anywhere, so it
+ * holds them all.
+ * @param {Object} proposition the offer
+ * @param {Object} metadata scope -> { selector, actionType } for Form-Based offers
+ * @returns {Object} the elements it changes (`elements`), the ones it replaces with `replaceHtml`
+ *   (`replaced`), what it replaces inside them (`nested`), and the `replaceHtml` selectors that
+ *   match nothing yet (`lateReplaced`)
+ */
+function heldElementsFor(proposition, metadata) {
+  const elements = new Set();
+  const replaced = new Set();
+  const nested = new Set();
+  const lateReplaced = [];
+  proposition.items.filter(changesPage).forEach((item) => {
+    if (item.schema === SCHEMA_HTML_CONTENT_ITEM) {
+      hold.elements.forEach((el) => {
+        if (!elementScopes(el).includes(proposition.scope)) return;
+        elements.add(el);
+        if (metadata[proposition.scope]?.actionType === 'replaceHtml') replaced.add(el);
+      });
+      return;
+    }
+    if (!item.data?.selector) return;
+    let targets = [];
+    try {
+      targets = findTargets(item.data.selector);
+    } catch { /* not a selector the browser can parse */ }
+    if (!targets.length) {
+      // looked up again once the offer renders, when the target exists
+      if (item.data.type === 'replaceHtml') lateReplaced.push(item.data.selector);
+      hold.elements.forEach((el) => {
+        elements.add(el);
+        if (item.data.type === 'replaceHtml') hold.mayBeReplaced.add(el);
+        if (item.data.type === 'insertBefore' || item.data.type === 'insertAfter') {
+          hold.insertedAround.add(el);
+        }
+      });
+    }
+    // an action changes its target and everything in it
+    targets.forEach((target) => [...hold.elements].forEach((el) => {
+      if (el.contains(target)) elements.add(el);
+      // `replaceHtml` inside a held element: it stays held until the SDK removes the target
+      if (el.contains(target) && target !== el && item.data.type === 'replaceHtml') {
+        nested.add(target);
+      }
+      if (!target.contains(el) || target === el) {
+        if (target === el) {
+          elements.add(el);
+          if (item.data.type === 'replaceHtml') replaced.add(el);
+          if (item.data.type === 'insertBefore' || item.data.type === 'insertAfter') {
+            hold.insertedAround.add(el);
+          }
+        }
+        return;
+      }
+      // it changes an element around a held one (e.g. `main`): hold that element itself,
+      // as its new content replaces the held one
+      holdElement(target);
+      elements.add(target);
+      if (item.data.type === 'replaceHtml') replaced.add(target);
+      if (item.data.type === 'insertBefore' || item.data.type === 'insertAfter') {
+        hold.insertedAround.add(target);
+      }
+    }));
+  });
+  return {
+    elements, replaced, nested, lateReplaced,
+  };
+}
+
+/**
+ * Target answered: records which held elements still wait for an offer, and shows the others.
+ * @param {Object[]} [propositions] the offers to apply; none when Target gave up
+ * @param {Object} [metadata] scope -> { selector, actionType } for Form-Based offers
+ */
+function settleHold(propositions, metadata = {}) {
+  if (!hold || hold.done) return;
+  hold.decided = true;
+  if (!propositions) {
+    releaseAllHeld();
+    return;
+  }
+  propositions.forEach((p) => hold.itemCounts.set(p.id, p.items.filter(changesPage).length));
+  propositions.filter((p) => !hold.rendered.has(p.id) && hold.itemCounts.get(p.id) > 0)
+    .forEach((p) => {
+      const {
+        elements, replaced, nested, lateReplaced,
+      } = heldElementsFor(p, metadata);
+      hold.pending.set(p.id, elements);
+      hold.nestedReplaced.set(p.id, nested);
+      if (lateReplaced.length) {
+        hold.lateReplaced.set(p.id, lateReplaced);
+        // the Web SDK waits for these targets itself; this sees them first, as it was
+        // created before the SDK's own watcher
+        hold.elements.forEach((el) => hold.lateObserver.observe(el, {
+          childList: true, subtree: true,
+        }));
+      }
+      nested.forEach((target) => hold.observer.observe(target.parentElement, { childList: true }));
+      hold.replacedBy.set(p.id, replaced);
+      replaced.forEach((el) => hold.replaceTargets.add(el));
+    });
+  revealSettled();
+}
+
+/**
+ * Stops applying personalization on this page view: propositions that have not been applied yet
+ * are dropped, and anything held for personalization is shown as it is.
+ */
+export function stopPersonalization() {
+  giveUpHold();
+}
+
+/**
  * Fetching propositions from the backend and applying the propositions as the AEM EDS page loads
  * its content async.
  * Documentation:
@@ -645,6 +1199,7 @@ function reportLateDisplayedPropositions(propositionIds) {
  * @returns a promise that the propositions were retrieved and will be applied as the page renders
  */
 async function applyPropositions(instanceName) {
+  watchRendering();
   const discoveredScopes = discoverPropositionScopes(document);
   if (discoveredScopes.length) {
     debug('martech', `auto-discovered ${discoveredScopes.length} scope(s):`, discoveredScopes);
@@ -668,11 +1223,18 @@ async function applyPropositions(instanceName) {
   });
   response = renderDecisionResponse;
   if (!renderDecisionResponse?.propositions) {
+    settleHold(null);
     return [];
   }
   if (personalizationTimedOut) {
     // The response came back after the personalization timeout: the page is already showing
-    // the default content, so do not apply the propositions anymore to avoid flickering
+    // the default content, so do not apply the propositions anymore to avoid flickering. They
+    // were never displayed either.
+    domActionPropositionIds = new Set(renderDecisionResponse.propositions
+      .filter((p) => p.items.some(
+        (i) => i.schema === SCHEMA_DOM_ACTION || i.schema === SCHEMA_HTML_CONTENT_ITEM,
+      ))
+      .map((p) => p.id));
     return renderDecisionResponse;
   }
   // dom-action (VEC) items carry their own selector and are applied by alloy directly, exactly
@@ -680,26 +1242,38 @@ async function applyPropositions(instanceName) {
   // target from the offer or from `data-mbox` auto-discovery and hand it to alloy via the metadata
   // map; drop items with no resolvable selector so they aren't retried every tick.
   const htmlContentMetadata = {};
-  let propositions = window.structuredClone(renderDecisionResponse.propositions)
+  const pageChanging = window.structuredClone(renderDecisionResponse.propositions)
     .filter((p) => p.items.some(
       (i) => i.schema === SCHEMA_DOM_ACTION || i.schema === SCHEMA_HTML_CONTENT_ITEM,
-    ))
+    ));
+  // these are reported as displayed only once applied, including the ones dropped below (they
+  // never are)
+  domActionPropositionIds = new Set(pageChanging.map((p) => p.id));
+  let propositions = pageChanging
     .map((p) => ({
       ...p,
       items: p.items.map((item) => {
-        if (item.schema === SCHEMA_HTML_CONTENT_ITEM) {
-          const target = resolveHtmlContentTarget(item, p.scope);
-          if (!target) {
-            debug('martech', `dropping html-content-item with no resolvable selector for scope "${p.scope}"`);
-            return null;
-          }
-          htmlContentMetadata[p.scope] = target;
+        if (item.schema !== SCHEMA_HTML_CONTENT_ITEM) return item;
+        const target = resolveHtmlContentTarget(item, p.scope);
+        if (!target) {
+          debug('martech', `dropping html-content-item with no resolvable selector for scope "${p.scope}"`);
+          return null;
         }
+        if (item.data?.selector) {
+          // alloy applies a scope's metadata to all its html-content-items, so an item that
+          // names its own target becomes a dom-action, which keeps its selector
+          return {
+            ...item,
+            schema: SCHEMA_DOM_ACTION,
+            data: { ...item.data, type: target.actionType, selector: target.selector },
+          };
+        }
+        htmlContentMetadata[p.scope] = target;
         return item;
       }).filter(Boolean),
     }))
     .filter((p) => p.items.length > 0);
-  domActionPropositionIds = new Set(propositions.map((p) => p.id));
+  settleHold(propositions, htmlContentMetadata);
   let disconnect;
   let isApplying = false;
   let pendingRun = false;
@@ -726,19 +1300,32 @@ async function applyPropositions(instanceName) {
       if (Object.keys(htmlContentMetadata).length) {
         applyOptions.metadata = htmlContentMetadata;
       }
+      // from here on the Web SDK may render them, whatever happens to this page view
+      const dispatched = propositions;
+      dispatched.forEach((p) => hold?.handed.add(p.id));
+      trackLateReplaced();
+      // the elements each held offer changes, as the SDK may report it rendered before answering
+      const heldElements = new Map(dispatched
+        .filter((p) => hold && !hold.done && hold.pending.has(p.id))
+        .map((p) => [p.id, new Set(hold.pending.get(p.id))]));
       const appliedPropositions = await window[instanceName](
         'applyPropositions',
         applyOptions,
       );
-      const newlyRendered = [];
-      appliedPropositions.propositions?.forEach((item) => {
-        if (item.renderAttempted) {
-          renderedPropositionIds.add(item.id);
-          newlyRendered.push(item.id);
-          propositions = propositions.filter((p) => p.id !== item.id);
-        }
-      });
-      reportLateDisplayedPropositions(newlyRendered);
+      const attempted = (appliedPropositions.propositions || [])
+        .filter((item) => item.renderAttempted).map((item) => item.id);
+      // a held offer counts as displayed once it is rendered and shown, the others right away
+      const held = attempted.filter((id) => heldElements.has(id));
+      held.filter((id) => !failedOffers.has(id))
+        .forEach((id) => reportOnReveal.set(id, heldElements.get(id)));
+      // some may have rendered already
+      reportShownOffers();
+      reportDisplayed(attempted.filter((id) => !held.includes(id) && !failedOffers.has(id)));
+      propositions = propositions.filter((p) => !attempted.includes(p.id));
+      const notAttempted = dispatched.filter((p) => !attempted.includes(p.id)).map((p) => p.id);
+      notAttempted.forEach((id) => hold?.handed.delete(id));
+      // we gave up waiting meanwhile: these won't be applied anymore
+      if (personalizationTimedOut) revealRendered(notAttempted, false);
       if (!propositions.length) {
         // Everything was applied, no need to keep watching the DOM
         disconnect?.();
@@ -788,8 +1375,16 @@ export async function initMartech(webSDKConfig, martechConfig = {}) {
   reportedPropositionIds.clear();
   discoveredScopeMeta.clear();
   domActionPropositionIds = new Set();
+  reportOnReveal.clear();
+  renderedOffers.clear();
+  failedOffers.clear();
   initialDisplayReported = false;
   personalizationTimedOut = false;
+  hold = undefined;
+  if (config.personalization && config.performanceOptimized) {
+    // before anything else, so the page never shows the default content first
+    startHold();
+  }
   initAlloyQueue(config.alloyInstanceName);
   if (config.dataLayer) {
     initDatalayer(config.dataLayerInstanceName);
@@ -944,6 +1539,7 @@ export async function martechEager() {
       // Stop applying propositions that arrive after the timeout: the default content is
       // already showing and applying them late would flicker the page
       personalizationTimedOut = true;
+      releaseAllHeld();
       if (alloyConfig.debugEnabled) {
         // eslint-disable-next-line no-console
         console.warn('Could not apply personalization in time. Either backend is taking too long, or user did not give consent in time.');

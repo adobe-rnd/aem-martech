@@ -11,8 +11,12 @@
  *
  * Like the real SDK, the `onBeforeEventSend` callback from the `configure` options is
  * invoked for every `sendEvent` command, and returning `false` from it cancels the event.
+ *
+ * Also like the real SDK, propositions `applyPropositions` reports as `renderAttempted` are
+ * announced to `window.__alloyMonitors` as rendered right after; set
+ * `window.__alloyMockAutoRender = false` to announce rendering from the test instead.
  */
-function createInstance() {
+function createInstance(name) {
   const instance = (command, options = {}) => {
     let payload = options;
     if (command === 'configure') {
@@ -32,11 +36,31 @@ function createInstance() {
     }
     instance.calls.push({ command, options: payload });
     const handler = window.__alloyMockHandlers?.[command];
+    let result;
     try {
-      return Promise.resolve(handler ? handler(payload) : {});
+      result = Promise.resolve(handler ? handler(payload) : {});
     } catch (err) {
       return Promise.reject(err);
     }
+    if (command === 'applyPropositions' && window.__alloyMockAutoRender !== false) {
+      // Like the real SDK, `applyPropositions` resolves before the offers are rendered, and
+      // the monitors hear about the rendering afterwards
+      result.then((applied) => {
+        const rendered = (applied?.propositions || []).filter((p) => p.renderAttempted)
+          .map((p) => (payload.propositions || []).find((o) => o.id === p.id) || p);
+        if (!rendered.length) return;
+        setTimeout(() => {
+          const byScope = {};
+          rendered.forEach((p) => {
+            byScope[p.scope] = [...(byScope[p.scope] || []), { id: p.id, scope: p.scope }];
+          });
+          (window.__alloyMonitors || []).forEach((m) => m.onContentRendering?.({
+            instanceName: name, status: 'rendering-succeeded', payload: byScope,
+          }));
+        }, 0);
+      });
+    }
+    return result;
   };
   instance.calls = [];
   instance.cancelledCalls = [];
@@ -47,7 +71,7 @@ function createInstance() {
 
 (window.__alloyNS || []).forEach((name) => {
   const stub = window[name];
-  const instance = createInstance();
+  const instance = createInstance(name);
   (Array.isArray(stub?.q) ? stub.q : []).forEach(([resolve, reject, args]) => {
     instance(...args).then(resolve, reject);
   });

@@ -261,6 +261,9 @@ Initializes the library. This should be called once in `loadEager`.
   - `decisionScopes` `{String[]}`: Additional decision scopes to request beyond the default `__view__` scope. Previously this required mutating the payload via `onBeforeEventSend`; this provides a dedicated config field. The scopes are included in both the eager `propositionFetch` (when `performanceOptimized` is `true`) and the `martechLazy` `sendEvent` (when `performanceOptimized` is `false`), with `__view__` always included. Default: `[]`.
   - `propositionScopeAttribute` `{String|null}`: The `data-*` attribute the plugin scans to auto-discover decision scopes from the DOM (rendered from `mbox` section metadata). Comma-separated values declare multiple scopes per element. Set to `null` to disable auto-discovery. Auto-discovery only runs in the performance-optimized eager path (the default); when `performanceOptimized` is `false`, request scopes explicitly via `decisionScopes`. Default: `'mbox'`.
   - `discoveredScopeActionType` `{String}`: Default `actionType` for auto-discovered scopes when neither the offer nor the section's `data-mbox-action` specifies one. One of `'setHtml'`, `'replaceHtml'`, `'appendHtml'`. Default: `'setHtml'`.
+  - `holdPersonalizedSections` `{Boolean}`: Keep the sections marked for personalization (`data-mbox`) hidden, with their space reserved, until their offer is in place, so visitors never see the default content swap. See [Avoiding flicker](#avoiding-flicker). Default: `false`.
+  - `personalizationHoldTimeout` `{Number}`: How long in ms to wait for offers. After it, offers the Web SDK hasn't started rendering are dropped and their sections show as they are. A section whose offer the SDK is already rendering stays hidden until the SDK reports the result, at most 5 more seconds (how long the SDK waits for an offer's target). Default: `3000`.
+  - `beforePersonalizedReveal` `{Function}`: Optional async function called with the elements an offer changed, before they are shown. Use it to finish decorating blocks the offer brought in.
 
 ---
 
@@ -309,6 +312,11 @@ Initializes RUM (Real User Monitoring) tracking.
 
 - **`sampleRUM`** `{Object}`: The RUM sampling object.
 - **`options`** `{Object}`: Optional configuration.
+
+---
+
+### `stopPersonalization()`
+Stops personalization for the current page view: offers the Web SDK hasn't started rendering are dropped, and the sections held for them by `holdPersonalizedSections` show as they are. Offers the SDK is already rendering can't be called back, so their sections show once the SDK reports the result.
 
 ---
 
@@ -448,6 +456,56 @@ initMartech(webSDKConfig, {
 
 See [`docs/form-based-target-activities.md`](./docs/form-based-target-activities.md) for a
 focused, author-facing walkthrough of using Form-Based activities.
+
+### Avoiding flicker
+
+Without it, a section shows its default content first, and the offer replaces it when Target
+answers. With `holdPersonalizedSections: true`, the plugin hides only the sections marked with
+`data-mbox` (with `filter: opacity(0)` and `inert`, so their space is kept and nothing jumps;
+the site's and the offers' own `opacity` are left alone) and shows each one
+once its own offer is on the page. The rest of the page renders as usual; nothing hides the body.
+
+- A section with no offer for this visitor shows as soon as Target answers.
+- If Target does not answer within `personalizationTimeout`, every section shows its default
+  content and late offers are not applied.
+- `personalizationHoldTimeout` caps how long to wait for offers; an offer the Web SDK is already
+  rendering by then keeps its section hidden until the SDK reports the result, so it never swaps
+  content a visitor is already looking at.
+- Markup that replaces a section (`replaceHtml`) stays hidden until its offer is in place.
+
+If an offer brings in block markup your project decorates (for example by re-running block
+loading on injected markup), pass `beforePersonalizedReveal` so the section shows once that
+is done:
+
+```js
+initMartech(webSDKConfig, {
+  holdPersonalizedSections: true,
+  beforePersonalizedReveal: async (elements) => {
+    await Promise.all(elements.map((el) => decorateInjectedBlocks(el)));
+  },
+});
+```
+
+A section shows when the Web SDK reports that it finished rendering the offer (through
+`window.__alloyMonitors`), not when `applyPropositions` returns, since that happens before the
+offer is on the page. If rendering fails, the section shows its default content.
+
+Visual Experience Composer (VEC) offers are held too, when their selector points into a marked
+section or contains one (Target's `:eq(n)` selectors included). An offer whose target isn't on
+the page yet holds every marked section until it renders or `personalizationHoldTimeout` passes. Offers that only track clicks change
+nothing on the page and hold nothing.
+
+With `replaceHtml`, the Web SDK inserts the offer before the section and removes the section
+once the offer's scripts have run. Both stay hidden until then, so the offer shows complete.
+For the other actions the Web SDK doesn't wait for an offer's external scripts: the section
+shows once the offer's markup is in place. An offer that builds its content with an external
+script should use `replaceHtml`, or carry its markup in the offer itself. Wrap a `replaceHtml` offer's content in an element: text at its top
+level can't be hidden, so it shows as soon as it is inserted.
+
+An offer is reported to Target as displayed once it is rendered and its section is shown.
+
+A VEC offer that changes an element containing marked sections (for example `main`) holds that
+element instead, until its offer is rendered.
 
 ## Working with Dynamic Content (SPAs)
 
