@@ -17,7 +17,7 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
     - [3. Configure the Plugin](#3-configure-the-plugin)
     - [4. Wait for Personalization](#4-wait-for-personalization)
     - [5. Load Lazy Logic](#5-load-lazy-logic)
-    - [6. Load Delayed Logic](#6-load-delayed-logic)
+    - [6. Load Consent-Dependent Logic](#6-load-consent-dependent-logic)
   - [API Reference](#api-reference)
     - [`initMartech(webSDKConfig, martechConfig)`](#initmartechwebsdkconfig-martechconfig)
     - [`updateUserConsent(consent)`](#updateuserconsentconsent)
@@ -28,9 +28,11 @@ The AEM Marketing Technology plugin helps you quickly set up a complete MarTech 
     - [`initRumTracking(sampleRUM, options)`](#initrumtrackingsamplerum-options)
     - [`isPersonalizationEnabled()`](#ispersonalizationenabled)
   - [Consent Management](#consent-management)
+      - [Connecting the Boilerplate Consent Flow](#connecting-the-boilerplate-consent-flow)
       - [Integrating with AEM Consent Banner Block](#integrating-with-aem-consent-banner-block)
       - [Integrating with OneTrust](#integrating-with-onetrust)
       - [Integrating with Cookiebot](#integrating-with-cookiebot)
+      - [Verifying Consent Handling](#verifying-consent-handling)
   - [Working with Dynamic Content (SPAs)](#working-with-dynamic-content-spas)
   - [FAQ](#faq)
     - [Why not use the default Adobe Launch approach?](#why-not-use-the-default-adobe-launch-approach)
@@ -50,9 +52,11 @@ This plugin optimizes the integration of Adobe's marketing technology stack by m
 
 This is achieved through a phased approach that aligns with modern web performance best practices:
 
-- **Eager Phase**: Handles critical tasks like personalization during the initial page load to prevent content flicker, ensuring a smooth user experience.
-- **Lazy Phase**: Loads analytics and the data layer after the main content has rendered, capturing metrics without delaying the Largest Contentful Paint (LCP).
-- **Delayed Phase**: Executes non-essential scripts, like third-party tags via Launch, after the page is fully interactive.
+- **Eager Phase**: Handles personalization during the initial page load when enabled and permitted by the site's consent policy, before the content renders.
+- **Lazy Phase**: Loads analytics and the data layer after the main content has rendered. Web SDK collection is governed by the mapped consent state.
+- **Consented Loading**: Loads Launch containers and other consent-dependent scripts from `consented.js` once the site's consent check grants the permissions they need. The plugin's hook for loading Launch containers is still named `martechDelayed`.
+
+The boilerplate starts its consent check from `loadDelayed()`. This gate does not prevent eager or lazy libraries from loading, and it does not update Web SDK consent automatically. See [Consent Management](#consent-management) for the site-level wiring.
 
 By instrumenting the core Adobe libraries directly but in a controlled sequence, this plugin minimizes performance impact while retaining the full power of the Adobe Experience Cloud. The AEP Web SDK extension in Launch ([v2.34.0+](https://github.com/adobe/reactor-extension-alloy/releases/tag/v2.34.0)) natively supports this self-hosted approach, so you can extend your implementation with Launch rules, data elements, and event types as usual.
 
@@ -126,7 +130,9 @@ If you use a linter, make sure to ignore minified files in your `.eslintignore`:
 
 ## Project Instrumentation
 
-To connect and configure the plugin, you'll need to edit your project's `head.html` and `scripts.js`.
+To connect and configure the plugin, you'll need to edit your project's `head.html`, `scripts/scripts.js`, and consent scripts. The examples below follow the [boilerplate consent flow introduced in adobe/aem-boilerplate#653](https://github.com/adobe/aem-boilerplate/pull/653).
+
+This setup retains eager personalization and lazy instrumentation. If your policy prohibits all MarTech library loads or requests before consent, also defer the plugin import, initialization, and lifecycle calls, and omit the early preload and preconnect hints below. That changes when personalization and the initial page view can run.
 
 ### 1. Add Preload Hints
 
@@ -147,7 +153,6 @@ import {
   updateUserConsent,
   martechEager,
   martechLazy,
-  martechDelayed,
 } from '../plugins/martech/src/index.js';
 ```
 
@@ -160,8 +165,8 @@ Call `initMartech` at the top of the `loadEager` method in your `scripts.js`. Th
  * Loads everything needed to get to LCP.
  */
 async function loadEager(doc) {
-  // Hook in your consent check to determine if personalization can run.
-  const isConsentGiven = true; /* your consent logic here */
+  // Replace with the stored personalization permission from your CMP.
+  const isConsentGiven = false;
 
   const martechLoadedPromise = initMartech(
     // 1. WebSDK Configuration
@@ -193,6 +198,10 @@ async function loadEager(doc) {
 }
 ```
 
+Use a known personalization choice during eager initialization. If no permission is available yet, keep personalization disabled and render the default content. Do not wait for the visitor to answer a banner before rendering the page. Moving personalization into `consented.js` is too late to preserve the same pre-render behavior and can introduce visible content changes.
+
+After calling `initMartech`, forward stored consent choices through `updateUserConsent` and subscribe to later CMP changes as described in [Consent Management](#consent-management). When the SDK is not configured yet, that update is queued. Do not block the lifecycle hook that configures the SDK while waiting for the update to complete.
+
 ### 4. Wait for Personalization
 
 Adjust your `loadEager` method to wait for the MarTech promise to resolve before rendering the main content. This prevents content flicker from personalized content.
@@ -221,17 +230,29 @@ async function loadLazy(doc) {
 }
 ```
 
-### 6. Load Delayed Logic
+### 6. Load Consent-Dependent Logic
 
-Add a reference to `martechDelayed` in your `loadDelayed` method:
+Keep the boilerplate consent check in `scripts/scripts.js`:
+
 ```js
 function loadDelayed() {
-  window.setTimeout(() => {
-    martechDelayed();
-    import('./delayed.js');
-  }, 3000);
+  import('./consent-check.js');
 }
 ```
+
+Load consent-dependent Launch containers from `scripts/consented.js`:
+
+```js
+import { martechDelayed } from '../plugins/martech/src/index.js';
+
+await martechDelayed();
+```
+
+This reuses the plugin initialized in step 3. Remove any unconditional `martechDelayed()` call from `scripts.js` or the old `delayed.js` to avoid loading containers before consent or loading them twice. Move other consent-dependent code from `delayed.js` into `consented.js`; keep code that does not require consent separate from this gate.
+
+Replace the placeholder in `consent-check.js` with your CMP integration. Apply the relevant Web SDK consent update before importing `consented.js`, and only import it when the visitor has granted the categories required by its tags. See [Connecting the Boilerplate Consent Flow](#connecting-the-boilerplate-consent-flow).
+
+The boilerplate no longer adds a three-second timer here. Consent-dependent scripts can start as soon as the check grants consent during the delayed phase. Consent and performance scheduling are separate concerns.
 
 ## API Reference
 
@@ -263,6 +284,7 @@ Initializes the library. This should be called once in `loadEager`.
 Sets user consent using the [Adobe standard v2.0](https://experienceleague.adobe.com/en/docs/experience-platform/landing/governance-privacy-security/consent/adobe/dataset) format. If you use a CMP based on IAB TCF 2.0, map its categories to the `collect`/`marketing`/`personalize`/`share` flags as shown in the [Consent Management](#consent-management) examples.
 
 - **`consent`** `{Object}`: An object detailing user consent choices (`collect`, `marketing`, `personalize`, `share`).
+- **Returns** `{Promise}`: Resolves once the SDK consent update has completed. If the SDK is not configured yet, the update is queued until configuration completes. Call `initMartech` before this method.
 
 ---
 
@@ -314,58 +336,160 @@ Initializes RUM (Real User Monitoring) tracking.
 
 ## Consent Management
 
-Connect your consent management system (CMS) to track user consent. Call `updateUserConsent` when your CMS sends a consent event.
+Connect your consent management platform (CMP) to `updateUserConsent`. Map its categories to `collect`, `marketing`, `personalize`, and `share`. Read stored choices on page load and forward later changes, including withdrawal. Do not turn a single analytics opt-in into permission for every category.
+
+The Web SDK defaults to `pending`. That setting controls SDK event handling; it does not prevent the SDK library from loading. SDK consent also does not control every third-party script a Launch container may load. Review the container's tags and their required permissions separately.
+
+#### Connecting the Boilerplate Consent Flow
+
+The boilerplate's `consent-check.js` dispatches a `consent.update` event with `detail: { consented: boolean }` and imports `consented.js` only when that boolean is true. The supplied check declines by default. It evaluates the choice once when imported and does not subscribe to a real CMP.
+
+Neither the plugin nor `updateUserConsent` listens for `consent.update` automatically. Your site must connect the CMP to both the SDK consent update and the script-loading decision:
+
+1. Register CMP listeners before the initial check runs. Retain the current choices so plugins initialized later receive them too.
+2. After `initMartech`, map the choices to the plugin's consent fields and call `updateUserConsent`. Let the eager and lazy hooks configure the SDK so queued updates can complete.
+3. Before loading consent-dependent Launch containers, wait for the relevant SDK consent update to complete and check the categories those containers require. Split scripts into separate loaders when their permissions differ.
+4. On subsequent changes, update the SDK again and load newly permitted scripts only once. On withdrawal, also apply the CMP/vendor-specific stop or cleanup behavior for tags already loaded.
+
+An asynchronous event listener alone does not enforce this ordering: `dispatchEvent()` does not wait for promises returned by listeners. Coordinate the SDK update and dependent import explicitly in your site's CMP adapter.
+
+The boolean `consented` is a loading decision, not a replacement for granular consent categories. The boilerplate's one-time import guard prevents repeated execution of `consented.js`; it does not unload scripts or stop their activity after withdrawal.
+
+Use `?consent=accept` and `?consent=decline` only to exercise the boilerplate placeholder during development. Do not retain the query-string override as a production consent mechanism.
+
+Replace the boilerplate's `scripts/consent-check.js` with the shared code below, then append **one** of the provider adapters in the following sections to that same file. Keep `loadDelayed()` and `consented.js` as shown in [step 6](#6-load-consent-dependent-logic). Load the CMP itself independently of `consented.js`; otherwise it cannot ask for consent.
+
+These examples assume `initMartech()` and `martechLazy()` have already run before `loadDelayed()`. They read the provider's current state after registering listeners, so a returning visitor's choice is not lost if the provider emitted its initial event earlier. Until a provider supplies a choice, the SDK remains pending and the consented entry point stays unloaded.
+
+```js
+// scripts/consent-check.js
+import { updateUserConsent } from '../plugins/martech/src/index.js';
+
+let latestRevision = 0;
+let pendingUpdate = Promise.resolve();
+
+function onConsentUpdate(consent) {
+  const revision = ++latestRevision;
+  pendingUpdate = pendingUpdate.then(async () => {
+    if (revision !== latestRevision) return;
+    await updateUserConsent(consent);
+    if (revision !== latestRevision) return;
+
+    // Example policy: this Launch container requires analytics and marketing consent.
+    const consented = consent.collect && consent.marketing;
+    window.dispatchEvent(new CustomEvent('consent.update', { detail: { consented } }));
+    if (consented && revision === latestRevision) {
+      await import('./consented.js');
+    }
+  }).catch((error) => {
+    console.error('Could not apply consent or load consented scripts', error);
+  });
+}
+
+// Append one provider adapter below.
+```
+
+Change the `consented` condition to match every tag loaded by your `consented.js`. The mappings below are examples, not a universal mapping between cookie categories and Adobe consent purposes. In particular, permission for advertising cookies does not necessarily grant permission for marketing communications or data sharing. Review these mappings with your privacy team.
+
+The update queue preserves SDK update order and skips superseded choices before starting a new import. Repeated grants reuse the browser's cached ES module, so `consented.js` executes once per page. A withdrawal cannot cancel an import already in progress or unload a running tag. Use `consent.update` to connect any vendor-specific stop or cleanup logic, and handle later grants if that vendor needs to be restarted.
+
+The `.catch()` reports SDK or loading failures without loading dependent scripts after a failed SDK update. Later CMP notifications can still be processed. An import that has already failed evaluation may require a page reload.
 
 #### Integrating with AEM Consent Banner Block
-Example for the [AEM Consent Banner Block](https://github.com/adobe/aem-block-collection/pull/50):
+
+For sites using the example [AEM Consent Banner Block from adobe/aem-block-collection#50](https://github.com/adobe/aem-block-collection/pull/50), append this adapter to `scripts/consent-check.js`:
+
 ```js
-function consentEventHandler(ev) {
-  const collect = ev.detail.categories.includes('CC_ANALYTICS');
-  const marketing = ev.detail.categories.includes('CC_MARKETING');
-  const personalize = ev.detail.categories.includes('CC_TARGETING');
-  const share = ev.detail.categories.includes('CC_SHARING');
-  updateUserConsent({ collect, marketing, personalize, share });
+function readAemConsent() {
+  const categories = window.consent?.categories;
+  if (!Array.isArray(categories)) return;
+
+  onConsentUpdate({
+    collect: categories.includes('CC_ANALYTICS'),
+    marketing: categories.includes('CC_MARKETING'),
+    personalize: categories.includes('CC_TARGETING'),
+    share: categories.includes('CC_SHARING'),
+  });
 }
-window.addEventListener('consent', consentEventHandler);
-window.addEventListener('consent-updated', consentEventHandler);
+
+window.addEventListener('consent', readAemConsent);
+window.addEventListener('consent-updated', readAemConsent);
+readAemConsent();
 ```
+
+Initialize the banner separately using its documented setup. The referenced block writes both stored choices and subsequent changes to `window.consent.categories` before emitting its events. Reading that snapshot avoids depending on an event payload and also handles a choice read before `consent-check.js` loads. Category codes come from your banner configuration.
+
+The linked block is an example in a closed, unmerged PR. Confirm the snapshot and event API of the version installed in your site before using this adapter.
 
 #### Integrating with OneTrust
-Example for [OneTrust](https://www.onetrust.com):
+
+Install your OneTrust CMP script independently of the Launch container, then append this adapter to `scripts/consent-check.js`. It uses the documented [`OneTrustGroupsUpdated` event](https://developer.onetrust.com/onetrust/docs/javascript-events-guide), which fires on initialization and when preferences change:
+
 ```js
-function consentEventHandler(ev) {
- const groups = ev.detail;
- const collect = groups.includes('C0002'); // Performance Cookies
- const personalize = groups.includes('C0003'); // Functional Cookies
- const share = groups.includes('C0008'); // Targeted Advertising
- updateUserConsent({ collect, personalize, share });
+function applyOneTrustGroups(groups) {
+  onConsentUpdate({
+    collect: groups.includes('C0002'),
+    marketing: groups.includes('C0004'),
+    personalize: groups.includes('C0003'),
+    share: false,
+  });
 }
-window.addEventListener('consent.onetrust', consentEventHandler);
+
+window.addEventListener('OneTrustGroupsUpdated', (event) => {
+  applyOneTrustGroups(event.detail);
+});
+
+if (typeof window.OnetrustActiveGroups === 'string') {
+  applyOneTrustGroups(window.OnetrustActiveGroups.split(',').filter(Boolean));
+}
 ```
+
+The snapshot handles OneTrust loading before this module; the listener handles OneTrust loading later and subsequent changes. Verify group IDs and their meaning in your OneTrust configuration. The example uses `C0002` for analytics, `C0003` for personalization, and `C0004` for marketing. Sharing remains denied until you map a separate applicable choice.
+
+OneTrust can mark groups as always active or apply regional defaults. If your policy requires an explicit response, include that requirement in the adapter before granting the corresponding permissions.
 
 #### Integrating with Cookiebot
-Example for [Cookiebot](https://www.cookiebot.com):
-```js
-function setupCookiebotConsent() {
-  function handleCookiebotConsent() {
-    const preferences = window.Cookiebot?.consent?.preferences || false;
-    const statistics = window.Cookiebot?.consent?.statistics || false;
-    const marketing = window.Cookiebot?.consent?.marketing || false;
-    
-    updateUserConsent({
-      collect: statistics,        // Statistics cookies
-      marketing: marketing,       // Marketing cookies
-      personalize: preferences,   // Preference cookies
-      share: marketing           // Marketing cookies
-    });
-  }
 
-  window.addEventListener('CookiebotOnConsentReady', handleCookiebotConsent);
-  window.addEventListener('CookiebotOnAccept', handleCookiebotConsent);
+Install the Cookiebot CMP script independently of the Launch container, then append this adapter to `scripts/consent-check.js`. Cookiebot documents its current state and events in its [developer reference](https://www.cookiebot.com/en/developer/):
+
+```js
+function readCookiebotConsent() {
+  const provider = window.Cookiebot;
+  if (!provider?.consent) return;
+
+  const hasResponse = provider.hasResponse === true;
+  onConsentUpdate({
+    collect: hasResponse && provider.consent.statistics === true,
+    marketing: hasResponse && provider.consent.marketing === true,
+    personalize: hasResponse && provider.consent.preferences === true,
+    share: false,
+  });
 }
 
-setupCookiebotConsent();
+window.addEventListener('CookiebotOnConsentReady', readCookiebotConsent);
+window.addEventListener('CookiebotOnAccept', readCookiebotConsent);
+window.addEventListener('CookiebotOnDecline', readCookiebotConsent);
+readCookiebotConsent();
 ```
+
+`CookiebotOnConsentReady` covers stored choices and newly submitted choices. The accept and decline listeners also re-read the current state; repeated notifications are safe. The initial read handles Cookiebot becoming ready before this module loads. With no response, this example denies the mapped permissions. Sharing remains denied until you map a separate applicable choice.
+
+If your site calls `Cookiebot.withdraw()` programmatically, call `readCookiebotConsent()` after withdrawing as well. This forwards the cleared state even if that operation does not emit one of the events above.
+
+#### Verifying Consent Handling
+
+Clear stored consent between fresh-visitor tests. Check eager/lazy requests separately from the consented entry point.
+
+| Scenario | Expected result |
+| --- | --- |
+| No choice or explicit decline | `consented.js` and its Launch containers do not load. Eager/lazy behavior matches the site's consent policy. |
+| Stored consent | The applicable SDK consent update completes before dependent tags start. |
+| Consent granted after page load | The CMP adapter forwards the update and loads newly permitted scripts without blocking page rendering or requiring a reload. |
+| Only some categories granted | Only scripts covered by those permissions load; other categories remain denied. |
+| Repeated grant notification | The consented entry point does not execute again and containers are not loaded twice. |
+| Consent withdrawn | The SDK receives the updated choices and the site applies the required vendor-specific stop or cleanup behavior. |
+
+If tags stop loading after a boilerplate upgrade, check that the CMP is connected to `consent-check.js`, that it grants the required permissions, and that your consent-dependent entry point is now `consented.js`. The placeholder declines by default. Also check for consent events emitted before listeners were registered.
 
 ## Working with Dynamic Content (SPAs)
 
